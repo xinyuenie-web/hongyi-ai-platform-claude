@@ -1,0 +1,17 @@
+{
+  "name": "红艺花木 - AI造型花木一站式服务",
+  "short_name": "红艺花木",
+  "description": "全国首家AI驱动的私家庭院造型花木一站式服务商",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#1F3864",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

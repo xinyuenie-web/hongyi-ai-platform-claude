@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc \"（Claude Cowork）红艺花木AI新电商策划方案（11AI优化精华版）202604012130.docx\" -o /tmp/plan.md)",
+      "Bash(python scripts/office/unpack.py \"（Claude Cowork）红艺花木AI新电商策划方案（11AI优化精华版）202604012130.docx\" /tmp/plan_unpacked/)",
+      "Bash(python \"C:/Users/Lenovo/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/eef708c1-0a0d-4908-94d3-a36ba7557911/f0cfa92e-6044-417e-beb5-7d7c3a1ff12a/skills/docx/scripts/office/unpack.py\" \"E:/01花木ai/01红艺AI花木平台1.0（Claude）/（Claude Cowork）红艺花木AI新电商策划方案（11AI优化精华版）202604012130.docx\" /tmp/plan_unpacked/)",
+      "Bash(pip install:*)",
+      "Read(//tmp/**)",
+      "Read(//c/tmp/**)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

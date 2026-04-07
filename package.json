@@ -1,0 +1,20 @@
+{
+  "name": "hongyi-platform",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w apps/server",
+    "dev:website": "npm run dev -w apps/website",
+    "build:shared": "npm run build -w packages/shared",
+    "build:server": "npm run build -w apps/server",
+    "build:website": "npm run build -w apps/website",
+    "seed": "npm run seed -w apps/server",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
