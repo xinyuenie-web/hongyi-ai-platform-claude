@@ -45,7 +45,9 @@ function parseCSVLine(line: string): string[] {
 
 /** Seed tree data from CSV */
 async function seedTrees(): Promise<void> {
-  const csvPath = path.resolve(__dirname, '../../../../../十种造型树木清单20260402.csv');
+  // Go up from apps/server to project root
+  const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
+  const csvPath = path.resolve(projectRoot, '十种造型树木清单20260402.csv');
   if (!fs.existsSync(csvPath)) {
     console.log('⚠ 树木CSV文件未找到:', csvPath);
     return;
@@ -109,7 +111,8 @@ async function seedTrees(): Promise<void> {
 
 /** Seed garden style data from CSV */
 async function seedGardenStyles(): Promise<void> {
-  const csvPath = path.resolve(__dirname, '../../../../../五类庭院别墅清单20260402.csv');
+  const projectRoot2 = path.resolve(__dirname, '..', '..', '..', '..');
+  const csvPath = path.resolve(projectRoot2, '五类庭院别墅清单20260402.csv');
   if (!fs.existsSync(csvPath)) {
     console.log('⚠ 庭院风格CSV文件未找到:', csvPath);
     return;
