@@ -150,7 +150,7 @@ async function seedGardenStyles(): Promise<void> {
       styleId,
       name,
       type: styleTypeMap[name] || 'modern',
-      image: `/uploads/styles/${styleId}/main.jpg`,
+      image: `/images/styles/${styleId}.png`,
       description,
       keywords: keywordsStr
         ? keywordsStr
