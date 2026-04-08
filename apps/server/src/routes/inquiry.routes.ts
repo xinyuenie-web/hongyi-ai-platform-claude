@@ -10,3 +10,8 @@ inquiryRouter.post('/', uploadPhotos, createInquiry);
 
 // Admin
 inquiryRouter.get('/', requireAuth, listInquiries);
+inquiryRouter.put('/:id', requireAuth, async (req, res) => {
+  const { Inquiry } = await import('../models/inquiry.model.js');
+  const updated = await Inquiry.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+  res.json({ success: true, data: updated });
+});
