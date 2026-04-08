@@ -83,12 +83,8 @@ async function seedTrees(): Promise<void> {
       price: {
         sale: parseInt(price),
       },
-      coverImage: `/uploads/trees/${treeId}/cover.jpg`,
-      images: [
-        `/uploads/trees/${treeId}/detail-1.jpg`,
-        `/uploads/trees/${treeId}/detail-2.jpg`,
-        `/uploads/trees/${treeId}/detail-3.jpg`,
-      ],
+      coverImage: `/images/trees/${treeId}.jpg`,
+      images: [`/images/trees/${treeId}.jpg`],
       fengshui: speciesInfo
         ? {
             symbol: speciesInfo.fengshuiSymbol,

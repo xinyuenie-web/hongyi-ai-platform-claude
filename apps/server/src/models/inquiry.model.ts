@@ -10,6 +10,7 @@ const inquirySchema = new Schema<InquiryDocument>(
     wechatId: { type: String },
     message: { type: String, required: true },
     treeId: { type: String },
+    photos: [{ type: String }],
     source: {
       type: String,
       enum: ['website_form', 'wechat', 'miniapp', 'douyin', 'xiaohongshu', 'referral', 'other'],

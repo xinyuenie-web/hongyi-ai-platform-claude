@@ -46,16 +46,30 @@ export async function getGardenStyles(): Promise<ApiResponse<IGardenStyleConfig[
   return fetchAPI<IGardenStyleConfig[]>('/api/v1/garden-styles');
 }
 
-/** Submit inquiry */
+/** Submit inquiry with optional photo uploads */
 export async function submitInquiry(data: {
   name: string;
   phone: string;
   wechatId?: string;
   message: string;
   treeId?: string;
+  photos?: File[];
 }): Promise<ApiResponse<{ id: string }>> {
-  return fetchAPI<{ id: string }>('/api/v1/inquiries', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
+  const formData = new FormData();
+  formData.append('name', data.name);
+  formData.append('phone', data.phone);
+  if (data.wechatId) formData.append('wechatId', data.wechatId);
+  formData.append('message', data.message);
+  if (data.treeId) formData.append('treeId', data.treeId);
+  if (data.photos) {
+    data.photos.forEach((file) => formData.append('photos', file));
+  }
+
+  const url = `${API_BASE}/api/v1/inquiries`;
+  const res = await fetch(url, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: { message: '网络请求失败' } }));
+    return { success: false, error: error.error || { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+  return res.json();
 }

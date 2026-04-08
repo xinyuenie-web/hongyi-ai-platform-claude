@@ -13,13 +13,18 @@ const createInquirySchema = z.object({
   treeId: z.string().optional(),
 });
 
-/** POST /api/v1/inquiries - Create inquiry */
+/** POST /api/v1/inquiries - Create inquiry (supports multipart with photos) */
 export const createInquiry = asyncHandler(async (req: Request, res: Response) => {
   const data = createInquirySchema.parse(req.body);
+
+  // Collect uploaded photo paths
+  const files = req.files as Express.Multer.File[] | undefined;
+  const photos = files?.map((f) => `/uploads/inquiries/${f.filename}`) || [];
 
   // Create inquiry
   const inquiry = await Inquiry.create({
     ...data,
+    photos,
     source: 'website_form',
     status: 'pending',
   });
