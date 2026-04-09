@@ -40,6 +40,8 @@ export interface IInquiry {
   message: string;
   /** 感兴趣的树木ID */
   treeId?: string;
+  /** 上传的照片 */
+  photos?: string[];
   /** 来源 */
   source: CustomerSource;
   /** 处理状态 */

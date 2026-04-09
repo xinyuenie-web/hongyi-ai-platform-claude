@@ -39,7 +39,7 @@ export function Header() {
               {link.label}
             </Link>
           ))}
-          <Link href="/contact" className="btn-primary text-sm">
+          <Link href="/ai-plan" className="btn-primary text-sm">
             免费AI方案
           </Link>
         </nav>
@@ -68,7 +68,7 @@ export function Header() {
             </Link>
           ))}
           <Link
-            href="/contact"
+            href="/ai-plan"
             className="btn-primary mt-2 w-full text-center"
             onClick={() => setMobileOpen(false)}
           >

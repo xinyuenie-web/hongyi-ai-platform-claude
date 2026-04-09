@@ -2,13 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, TreePine, Palette, Calendar, User } from 'lucide-react';
+import { Home, TreePine, Sparkles, Calendar, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { href: '/', icon: Home, label: '首页' },
   { href: '/trees', icon: TreePine, label: '树木' },
-  { href: '/styles', icon: Palette, label: '方案' },
+  { href: '/ai-plan', icon: Sparkles, label: 'AI方案' },
   { href: '/appointment', icon: Calendar, label: '预约' },
   { href: '/contact', icon: User, label: '联系' },
 ];

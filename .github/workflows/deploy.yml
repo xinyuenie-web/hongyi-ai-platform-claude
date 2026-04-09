@@ -28,12 +28,14 @@ jobs:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
-          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET'" << 'ENDSSH'
+          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY'" << 'ENDSSH'
           set -e
           REPO_URL="$1"
           JWT_SECRET="$2"
+          DOUBAO_API_KEY="$3"
           PROJECT_DIR="/opt/hongyi"
 
           echo "=== Deploy started at $(date) ==="
@@ -62,6 +64,7 @@ jobs:
 
           # Create .env
           echo "JWT_SECRET=${JWT_SECRET}" > .env
+          echo "DOUBAO_API_KEY=${DOUBAO_API_KEY}" >> .env
           echo "NEXT_PUBLIC_API_URL=" >> .env
           echo "NODE_ENV=production" >> .env
 

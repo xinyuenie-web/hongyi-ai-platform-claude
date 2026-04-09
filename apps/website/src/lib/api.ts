@@ -183,6 +183,39 @@ export interface SeasonCare {
   pestControl: string;
 }
 
+/** AI plan generation result */
+export interface AIPlanResult {
+  generatedImage: string | null;
+  analysis: AIAnalysisResult | null;
+  prompt: string | null;
+}
+
+/** Generate AI garden plan with Doubao image generation */
+export async function generateAIPlan(data: {
+  name: string;
+  phone: string;
+  styleId: string;
+  gardenPhoto: File;
+  treeIds: string[];
+  message: string;
+}): Promise<ApiResponse<AIPlanResult>> {
+  const formData = new FormData();
+  formData.append('name', data.name);
+  formData.append('phone', data.phone);
+  formData.append('styleId', data.styleId);
+  formData.append('photos', data.gardenPhoto);
+  formData.append('treeIds', JSON.stringify(data.treeIds));
+  formData.append('message', data.message);
+
+  const url = `${getApiBase()}/api/v1/ai/generate-plan`;
+  const res = await fetch(url, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: { message: 'AI方案生成失败' } }));
+    return { success: false, error: error.error || { code: 'AI_ERROR', message: 'AI方案生成失败' } };
+  }
+  return res.json();
+}
+
 /** Submit inquiry with optional photo uploads */
 export async function submitInquiry(data: {
   name: string;

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { analyzeGardenHandler } from '../controllers/ai.controller.js';
+import { analyzeGardenHandler, generatePlanHandler } from '../controllers/ai.controller.js';
 import { uploadPhotos } from '../middleware/upload.js';
 import { generateCarePlan, getAllCareGuides, getCareGuide } from '../services/care-ai.service.js';
 
@@ -7,6 +7,9 @@ export const aiRouter = Router();
 
 // AI garden analysis (supports optional photo upload)
 aiRouter.post('/analyze-garden', uploadPhotos, analyzeGardenHandler);
+
+// AI garden plan generation with Doubao image generation
+aiRouter.post('/generate-plan', uploadPhotos, generatePlanHandler);
 
 // AI care guides
 aiRouter.get('/care', async (_req, res) => {

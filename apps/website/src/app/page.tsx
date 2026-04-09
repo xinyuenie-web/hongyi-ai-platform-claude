@@ -27,7 +27,7 @@ export default async function HomePage() {
           {/* Gradient overlay at bottom */}
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-brand-navy/90 via-brand-navy/50 to-transparent p-6 pt-20">
             <div className="flex flex-col gap-3">
-              <Link href="/contact" className="btn-gold w-full text-center text-base">
+              <Link href="/ai-plan" className="btn-gold w-full text-center text-base">
                 免费AI方案体验
               </Link>
               <Link href="/trees" className="btn-outline w-full border-white text-center text-base text-white hover:bg-white hover:text-brand-navy">
@@ -68,7 +68,7 @@ export default async function HomePage() {
               11年专业经验，百亩基地产地直供。
             </p>
             <div className="flex flex-wrap gap-4">
-              <Link href="/contact" className="btn-gold text-base">
+              <Link href="/ai-plan" className="btn-gold text-base">
                 免费AI方案体验
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
@@ -145,7 +145,7 @@ export default async function HomePage() {
             上传一张庭院照片，AI自动分析风水格局，生成多角度效果图，推荐适配树种，一键获取报价。
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-            <Link href="/contact" className="btn-gold w-full text-base sm:w-auto">
+            <Link href="/ai-plan" className="btn-gold w-full text-base sm:w-auto">
               <Camera className="mr-2 h-5 w-5" />
               上传照片，免费体验
             </Link>
