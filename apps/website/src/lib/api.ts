@@ -97,8 +97,8 @@ export async function analyzeGarden(data: {
 }
 
 /** Get available appointment time slots for a date */
-export async function getAvailableSlots(date: string): Promise<ApiResponse<string[]>> {
-  return fetchAPI<string[]>(`/api/v1/appointments/available-slots?date=${date}`);
+export async function getAvailableSlots(date: string): Promise<ApiResponse<{ time: string; available: boolean; remaining: number }[]>> {
+  return fetchAPI<{ time: string; available: boolean; remaining: number }[]>(`/api/v1/appointments/available-slots?date=${date}`);
 }
 
 /** Create appointment */

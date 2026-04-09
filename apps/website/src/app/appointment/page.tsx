@@ -36,7 +36,7 @@ export default function AppointmentPage() {
     message: '',
   });
   const [dates, setDates] = useState<{ date: string; label: string; weekday: string }[]>([]);
-  const [slots, setSlots] = useState<string[]>([]);
+  const [slots, setSlots] = useState<{ time: string; available: boolean; remaining: number }[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [trees, setTrees] = useState<ITree[]>([]);
   const [loading, setLoading] = useState(false);
@@ -278,20 +278,20 @@ export default function AppointmentPage() {
               <p className="text-sm text-gray-400">该日期暂无可用时段</p>
             ) : (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                {slots.map((slot) => {
-                  const selected = form.timeSlot === slot;
+                {slots.filter((s) => s.available).map((slot) => {
+                  const selected = form.timeSlot === slot.time;
                   return (
                     <button
-                      key={slot}
+                      key={slot.time}
                       type="button"
-                      onClick={() => setForm({ ...form, timeSlot: slot })}
+                      onClick={() => setForm({ ...form, timeSlot: slot.time })}
                       className={`rounded-lg border py-2.5 text-center text-sm font-medium transition-all ${
                         selected
                           ? 'border-brand-navy bg-brand-navy text-white'
                           : 'border-gray-200 text-gray-700 hover:border-brand-navy/50'
                       }`}
                     >
-                      {slot}
+                      {slot.time}
                     </button>
                   );
                 })}
