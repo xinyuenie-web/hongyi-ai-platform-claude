@@ -1,4 +1,4 @@
-import type { ApiResponse, ITree, IGardenStyleConfig, TreeListQuery } from '@hongyi/shared';
+import type { ApiResponse, ITree, IGardenStyleConfig, TreeListQuery, IQuotation, IOrder } from '@hongyi/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -44,6 +44,136 @@ export async function getSpeciesList(): Promise<ApiResponse<string[]>> {
 /** Get garden styles */
 export async function getGardenStyles(): Promise<ApiResponse<IGardenStyleConfig[]>> {
   return fetchAPI<IGardenStyleConfig[]>('/api/v1/garden-styles');
+}
+
+/** AI garden analysis */
+export interface AIAnalysisResult {
+  recommendedStyles: Array<{
+    styleId: string;
+    name: string;
+    type: string;
+    image: string;
+    description: string;
+    matchScore: number;
+    reason: string;
+  }>;
+  recommendedTrees: Array<{
+    treeId: string;
+    name: string;
+    species: string;
+    coverImage: string;
+    price: number;
+    specs: { height: number; crown: number };
+    reason: string;
+    matchScore: number;
+  }>;
+  fengshuiTip: string;
+  designSummary: string;
+}
+
+export async function analyzeGarden(data: {
+  message: string;
+  photos?: File[];
+}): Promise<ApiResponse<AIAnalysisResult>> {
+  const formData = new FormData();
+  formData.append('message', data.message);
+  if (data.photos) {
+    data.photos.forEach((file) => formData.append('photos', file));
+  }
+  const url = `${API_BASE}/api/v1/ai/analyze-garden`;
+  const res = await fetch(url, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: { message: 'AI分析失败' } }));
+    return { success: false, error: error.error || { code: 'AI_ERROR', message: 'AI分析失败' } };
+  }
+  return res.json();
+}
+
+/** Get available appointment time slots for a date */
+export async function getAvailableSlots(date: string): Promise<ApiResponse<string[]>> {
+  return fetchAPI<string[]>(`/api/v1/appointments/available-slots?date=${date}`);
+}
+
+/** Create appointment */
+export async function createAppointment(data: {
+  name: string;
+  phone: string;
+  wechatId?: string;
+  type: string;
+  date: string;
+  timeSlot: string;
+  treeIds?: string[];
+  message?: string;
+}): Promise<ApiResponse<{ _id: string; date: string; timeSlot: string; type: string; status: string }>> {
+  return fetchAPI(`/api/v1/appointments`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** Create quotation */
+export async function createQuotation(data: {
+  treeIds: string[];
+  name: string;
+  phone: string;
+  serviceNames?: string[];
+}): Promise<ApiResponse<IQuotation>> {
+  return fetchAPI(`/api/v1/quotations`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** Get quotation by quotationNo */
+export async function getQuotation(quotationNo: string): Promise<ApiResponse<IQuotation>> {
+  return fetchAPI<IQuotation>(`/api/v1/quotations/${quotationNo}`);
+}
+
+/** Get standard services list */
+export async function getStandardServices(): Promise<ApiResponse<{ name: string; description: string; price: number }[]>> {
+  return fetchAPI(`/api/v1/quotations/services/list`);
+}
+
+/** Create order */
+export async function createOrder(data: {
+  treeIds: string[];
+  name: string;
+  phone: string;
+  shippingAddress: string;
+}): Promise<ApiResponse<IOrder>> {
+  return fetchAPI(`/api/v1/orders`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** Get order by orderNo */
+export async function getOrder(orderNo: string): Promise<ApiResponse<IOrder>> {
+  return fetchAPI<IOrder>(`/api/v1/orders/${orderNo}`);
+}
+
+/** Get AI care guides */
+export async function getCareGuides(): Promise<ApiResponse<CareGuide[]>> {
+  return fetchAPI<CareGuide[]>('/api/v1/ai/care');
+}
+
+export interface CareGuide {
+  species: string;
+  overview: string;
+  seasons: {
+    spring: SeasonCare;
+    summer: SeasonCare;
+    autumn: SeasonCare;
+    winter: SeasonCare;
+  };
+  tips: string[];
+}
+
+export interface SeasonCare {
+  watering: string;
+  fertilizing: string;
+  pruning: string;
+  pestControl: string;
 }
 
 /** Submit inquiry with optional photo uploads */

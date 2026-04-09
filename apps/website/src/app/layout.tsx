@@ -27,6 +27,11 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'zh_CN',
     siteName: 'AI · 红艺花木',
+    url: 'https://ai花木.com',
+  },
+  metadataBase: new URL('https://xn--ai-0p4ew22l.com'),
+  alternates: {
+    canonical: '/',
   },
 };
 

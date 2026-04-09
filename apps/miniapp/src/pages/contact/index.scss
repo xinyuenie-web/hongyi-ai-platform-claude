@@ -1,0 +1,159 @@
+.contact-page {
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding-bottom: 60px;
+}
+
+.contact-header {
+  background: linear-gradient(135deg, #1F3864 0%, #2c4f8a 100%);
+  padding: 48px 32px 60px;
+}
+
+.header-title {
+  display: block;
+  font-size: 44px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.header-desc {
+  display: block;
+  font-size: 26px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 12px;
+}
+
+/* Form */
+.form-card {
+  background: #ffffff;
+  margin: -24px 24px 24px;
+  border-radius: 20px;
+  padding: 32px 28px;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.context-info {
+  background: rgba(31, 56, 100, 0.06);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+.context-label {
+  font-size: 26px;
+  color: #1F3864;
+}
+
+.form-item {
+  margin-bottom: 28px;
+}
+
+.form-label {
+  display: block;
+  font-size: 28px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.required {
+  color: #e53935;
+}
+
+.form-input {
+  width: 100%;
+  height: 80px;
+  background: #f7f7f7;
+  border-radius: 12px;
+  padding: 0 24px;
+  font-size: 28px;
+  color: #333;
+}
+
+.form-textarea {
+  width: 100%;
+  min-height: 180px;
+  background: #f7f7f7;
+  border-radius: 12px;
+  padding: 20px 24px;
+  font-size: 28px;
+  color: #333;
+  line-height: 1.8;
+}
+
+.char-count {
+  display: block;
+  text-align: right;
+  font-size: 22px;
+  color: #ccc;
+  margin-top: 8px;
+}
+
+.submit-btn {
+  width: 100% !important;
+  height: 88px !important;
+  background: linear-gradient(135deg, #BF8F00 0%, #d4a017 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 44px !important;
+  font-size: 32px !important;
+  font-weight: 600 !important;
+  margin-top: 8px;
+  line-height: 88px !important;
+}
+
+.submit-btn[disabled] {
+  opacity: 0.6;
+}
+
+/* Quick Contact */
+.quick-contact {
+  padding: 0 24px;
+}
+
+.quick-title {
+  display: block;
+  font-size: 30px;
+  font-weight: 700;
+  color: #1F3864;
+  margin-bottom: 20px;
+}
+
+.contact-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.contact-method {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  gap: 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+
+.method-icon {
+  font-size: 40px;
+}
+
+.method-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.method-label {
+  font-size: 24px;
+  color: #888;
+}
+
+.method-value {
+  font-size: 30px;
+  font-weight: 600;
+  color: #1F3864;
+}

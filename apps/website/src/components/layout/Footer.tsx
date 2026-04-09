@@ -25,6 +25,9 @@ export function Footer() {
             <div className="space-y-2 text-sm">
               <Link href="/trees" className="block hover:text-brand-gold">精品树木</Link>
               <Link href="/styles" className="block hover:text-brand-gold">庭院风格</Link>
+              <Link href="/appointment" className="block hover:text-brand-gold">预约看树</Link>
+              <Link href="/quotation" className="block hover:text-brand-gold">在线报价</Link>
+              <Link href="/care" className="block hover:text-brand-gold">养护指南</Link>
               <Link href="/contact" className="block hover:text-brand-gold">联系我们</Link>
             </div>
           </div>

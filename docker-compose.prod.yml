@@ -1,0 +1,38 @@
+# ============================================================
+# 生产环境覆盖配置
+# 用法: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ============================================================
+
+services:
+  mongo:
+    # 生产环境限制资源
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  server:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  website:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          memory: 128M

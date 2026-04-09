@@ -1,20 +1,13 @@
 'use client';
 
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { TreePine, LayoutDashboard, MessageSquare, LogOut, Menu, X } from 'lucide-react';
+import { TreePine, LayoutDashboard, MessageSquare, LogOut, Menu, X, CalendarCheck, FileText, ShoppingCart } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-const AuthContext = createContext<{ token: string; logout: () => void }>({
-  token: '',
-  logout: () => {},
-});
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
+import { AuthContext, useAuth } from './auth-context';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -106,6 +99,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin', label: '仪表盘', icon: LayoutDashboard },
     { href: '/admin/trees', label: '树木管理', icon: TreePine },
     { href: '/admin/inquiries', label: '客户询盘', icon: MessageSquare },
+    { href: '/admin/appointments', label: '预约管理', icon: CalendarCheck },
+    { href: '/admin/quotations', label: '报价管理', icon: FileText },
+    { href: '/admin/orders', label: '订单管理', icon: ShoppingCart },
   ];
 
   return (

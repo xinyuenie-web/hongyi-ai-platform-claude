@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { useAuth } from '../layout';
+import { useAuth } from '../auth-context';
 import { Phone, MessageCircle, Clock, CheckCircle, XCircle, ImageIcon } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';

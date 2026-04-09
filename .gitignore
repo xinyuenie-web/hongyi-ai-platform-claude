@@ -35,3 +35,20 @@ coverage/
 # Misc
 *.tsbuildinfo
 .turbo/
+
+# Deploy packages
+*.tar.gz
+
+# Uploads (user-generated)
+uploads/inquiries/*
+!uploads/inquiries/.gitkeep
+
+# 素材文件夹 (不入仓库)
+202604091400新增信息/
+素材*/
+
+# Miniapp build
+apps/miniapp/dist/
+
+# Private company docs
+*.docx

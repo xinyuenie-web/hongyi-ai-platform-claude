@@ -33,9 +33,11 @@ export function WeChatFloat() {
               扫码添加微信客服，获取专属庭院方案
             </p>
 
-            <div className="mx-auto mb-4 flex h-48 w-48 items-center justify-center rounded-xl bg-gray-100 text-sm text-gray-400">
-              微信二维码
-            </div>
+            <img
+              src="/images/wechat-qr.jpg"
+              alt="聂兴富微信二维码"
+              className="mx-auto mb-4 h-48 w-48 rounded-xl object-cover"
+            />
 
             <p className="text-sm text-gray-600">
               聂先生 <span className="font-medium text-brand-navy">13607449139</span>

@@ -1,0 +1,16 @@
+node_modules
+.next
+dist
+.git
+.github
+*.tar.gz
+*.log
+202604091400新增信息
+素材*
+apps/miniapp/dist
+apps/miniapp/node_modules
+uploads/inquiries/*
+!uploads/inquiries/.gitkeep
+.env.local
+.DS_Store
+Thumbs.db

@@ -8,6 +8,8 @@ const navLinks = [
   { href: '/', label: '首页' },
   { href: '/trees', label: '精品树木' },
   { href: '/styles', label: '庭院风格' },
+  { href: '/appointment', label: '预约看树' },
+  { href: '/care', label: '养护指南' },
   { href: '/contact', label: '联系我们' },
 ];
 

@@ -1,0 +1,91 @@
+# ============================================================
+# 红艺AI花木平台 - Docker Compose 全栈编排
+#
+# 用法:
+#   开发环境: docker compose up --build
+#   生产环境: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   停止:     docker compose down
+#   查看日志: docker compose logs -f
+# ============================================================
+
+services:
+  # ─────────────── MongoDB 数据库 ───────────────
+  mongo:
+    image: mongo:7
+    container_name: hongyi-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=hongyi
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hongyi-net
+
+  # ─────────────── Express API 后端 ───────────────
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: hongyi-server
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - MONGODB_URI=mongodb://mongo:27017/hongyi
+      - JWT_SECRET=${JWT_SECRET:-hongyi-docker-secret-change-in-prod}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - hongyi-net
+
+  # ─────────────── Next.js 前端网站 ───────────────
+  website:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.website
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+    container_name: hongyi-website
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    depends_on:
+      - server
+    networks:
+      - hongyi-net
+
+  # ─────────────── Nginx 反向代理 ───────────────
+  nginx:
+    image: nginx:alpine
+    container_name: hongyi-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - website
+      - server
+    networks:
+      - hongyi-net
+
+volumes:
+  mongo_data:
+    name: hongyi-mongo-data
+  uploads_data:
+    name: hongyi-uploads
+
+networks:
+  hongyi-net:
+    name: hongyi-network

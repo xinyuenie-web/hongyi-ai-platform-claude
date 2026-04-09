@@ -8,6 +8,10 @@ import { treeRouter } from './routes/tree.routes.js';
 import { authRouter } from './routes/auth.routes.js';
 import { inquiryRouter } from './routes/inquiry.routes.js';
 import { gardenStyleRouter } from './routes/garden-style.routes.js';
+import { aiRouter } from './routes/ai.routes.js';
+import { appointmentRouter } from './routes/appointment.routes.js';
+import { orderRouter } from './routes/order.routes.js';
+import { quotationRouter } from './routes/quotation.routes.js';
 import { errorHandler } from './middleware/error.js';
 
 export function createApp(): express.Application {
@@ -29,6 +33,10 @@ export function createApp(): express.Application {
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/inquiries', inquiryRouter);
   app.use('/api/v1/garden-styles', gardenStyleRouter);
+  app.use('/api/v1/ai', aiRouter);
+  app.use('/api/v1/appointments', appointmentRouter);
+  app.use('/api/v1/orders', orderRouter);
+  app.use('/api/v1/quotations', quotationRouter);
 
   // Health check
   app.get('/api/health', (_req, res) => {

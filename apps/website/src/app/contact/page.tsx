@@ -56,11 +56,13 @@ export default function ContactPage() {
             ))}
           </div>
 
-          {/* WeChat QR placeholder */}
+          {/* WeChat QR */}
           <div className="rounded-xl bg-green-50 p-6 text-center">
-            <div className="mx-auto mb-3 flex h-40 w-40 items-center justify-center rounded-xl bg-white text-sm text-gray-400">
-              微信二维码
-            </div>
+            <img
+              src="/images/wechat-qr.jpg"
+              alt="聂兴富微信二维码"
+              className="mx-auto mb-3 h-40 w-40 rounded-xl object-cover"
+            />
             <p className="text-sm font-medium text-green-700">扫码添加微信</p>
             <p className="text-xs text-green-600">获取专属庭院方案</p>
           </div>
