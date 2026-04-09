@@ -87,7 +87,7 @@ export async function analyzeGarden(data: {
   if (data.photos) {
     data.photos.forEach((file) => formData.append('photos', file));
   }
-  const url = `${API_BASE}/api/v1/ai/analyze-garden`;
+  const url = `${getApiBase()}/api/v1/ai/analyze-garden`;
   const res = await fetch(url, { method: 'POST', body: formData });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: { message: 'AI分析失败' } }));
@@ -202,7 +202,7 @@ export async function submitInquiry(data: {
     data.photos.forEach((file) => formData.append('photos', file));
   }
 
-  const url = `${API_BASE}/api/v1/inquiries`;
+  const url = `${getApiBase()}/api/v1/inquiries`;
   const res = await fetch(url, { method: 'POST', body: formData });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: { message: '网络请求失败' } }));
