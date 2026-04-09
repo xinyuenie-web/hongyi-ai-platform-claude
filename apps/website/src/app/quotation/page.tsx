@@ -17,7 +17,7 @@ import { getTreeList, getStandardServices, createQuotation } from '@/lib/api';
 import { formatPrice } from '@hongyi/shared';
 import type { ITree, IQuotation } from '@hongyi/shared';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 function resolveImage(src: string): string {
   if (!src) return '';

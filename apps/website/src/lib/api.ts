@@ -1,6 +1,6 @@
 import type { ApiResponse, ITree, IGardenStyleConfig, TreeListQuery, IQuotation, IOrder } from '@hongyi/shared';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
   const url = `${API_BASE}${endpoint}`;

@@ -7,7 +7,7 @@ import { submitInquiry, analyzeGarden, type AIAnalysisResult } from '@/lib/api';
 import { formatPrice } from '@hongyi/shared';
 import { Send, CheckCircle, Loader2, Camera, X, Sparkles, TreePine, Palette, Wind } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 /** Resolve image path: /images/* are served by Next.js, /uploads/* by API server */
 function resolveImage(src: string): string {

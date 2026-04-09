@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { TreePine, LayoutDashboard, MessageSquare, LogOut, Menu, X, CalendarCheck, FileText, ShoppingCart } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 import { AuthContext, useAuth } from './auth-context';
 

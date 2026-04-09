@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useAuth } from '../auth-context';
 import { formatPrice } from '@hongyi/shared';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface Tree {
   _id: string;
