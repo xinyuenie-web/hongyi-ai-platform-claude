@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     '红艺花木精品造型树木产品中心。罗汉松、黑松、五针松、榆树桩、红花檵木、对接白蜡、紫薇、大阪松、黄杨、枸骨等高端造型树木，每棵树都有唯一身份档案。',
 };
 
-export const revalidate = 1800; // 30 min
+export const dynamic = 'force-dynamic';
 
 interface PageProps {
   searchParams: {

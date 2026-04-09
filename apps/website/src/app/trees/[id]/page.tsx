@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-export const revalidate = 1800;
+export const dynamic = 'force-dynamic';
 
 export default async function TreeDetailPage({ params }: PageProps) {
   const { id } = await params;

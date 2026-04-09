@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   description: '五种经典庭院风格方案：现代简约、新中式、欧式古典、日式禅意、田园托斯卡纳。AI智能匹配，为您的庭院定制专属造型花木方案。',
 };
 
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
 export default async function StylesPage() {
   const res = await getGardenStyles().catch(() => null);

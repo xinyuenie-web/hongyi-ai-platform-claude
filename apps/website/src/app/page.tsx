@@ -4,8 +4,7 @@ import { TreePine, Camera, Truck, Shield, ArrowRight } from 'lucide-react';
 import { getTreeList } from '@/lib/api';
 import { TreeCard } from '@/components/tree/TreeCard';
 
-// ISR: revalidate every 1 hour
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const treesRes = await getTreeList({ limit: 6, status: 'available' }).catch(() => null);
