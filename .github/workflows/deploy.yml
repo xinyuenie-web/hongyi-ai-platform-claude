@@ -26,6 +26,7 @@ jobs:
     name: 🚀 Build & Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: production
 
     steps:
       - name: 📋 Checkout code
@@ -55,6 +56,21 @@ jobs:
             echo "  🌳 红艺花木 - 开始自动部署"
             echo "  时间: $(date '+%Y-%m-%d %H:%M:%S')"
             echo "=========================================="
+
+            # 0. 确保 Docker 已安装
+            if ! command -v docker &> /dev/null; then
+              echo "安装 Docker..."
+              curl -fsSL https://get.docker.com | sh
+              systemctl start docker
+              systemctl enable docker
+              # 配置国内镜像加速
+              mkdir -p /etc/docker
+              cat > /etc/docker/daemon.json << 'DOCKERCFG'
+{"registry-mirrors":["https://docker.xuanyuan.me"],"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
+DOCKERCFG
+              systemctl daemon-reload
+              systemctl restart docker
+            fi
 
             # 1. 确保项目目录存在
             if [ ! -d "$PROJECT_DIR/.git" ]; then
