@@ -62,6 +62,8 @@ export default function AIPlanPage() {
   const [gardenPreview, setGardenPreview] = useState<string>('');
   const [styles, setStyles] = useState<IGardenStyleConfig[]>([]);
   const [trees, setTrees] = useState<ITree[]>([]);
+  const [stylesLoading, setStylesLoading] = useState(true);
+  const [treesLoading, setTreesLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AIPlanResult | null>(null);
   const [error, setError] = useState('');
@@ -70,12 +72,18 @@ export default function AIPlanPage() {
 
   // Load styles and trees
   useEffect(() => {
-    getGardenStyles().then((res) => {
-      if (res.success && res.data) setStyles(res.data);
-    });
-    getTreeList({ status: 'available', limit: 50 }).then((res) => {
-      if (res.success && res.data) setTrees(res.data);
-    });
+    getGardenStyles()
+      .then((res) => {
+        if (res.success && res.data) setStyles(res.data);
+      })
+      .catch(() => {})
+      .finally(() => setStylesLoading(false));
+    getTreeList({ status: 'available', limit: 50 })
+      .then((res) => {
+        if (res.success && res.data) setTrees(res.data);
+      })
+      .catch(() => {})
+      .finally(() => setTreesLoading(false));
   }, []);
 
   function handlePhotoSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -281,6 +289,14 @@ export default function AIPlanPage() {
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">选择参考庭院风格</h2>
               <p className="mb-5 text-sm text-gray-500">选择您喜欢的庭院风格，AI将以此为基础生成效果图</p>
+              {stylesLoading ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-400">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  加载庭院风格...
+                </div>
+              ) : styles.length === 0 ? (
+                <p className="py-12 text-center text-sm text-gray-400">暂无庭院风格数据，请稍后重试</p>
+              ) : (
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 {styles.map((style) => {
                   const selected = form.styleId === style.styleId;
@@ -323,6 +339,7 @@ export default function AIPlanPage() {
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
@@ -384,6 +401,14 @@ export default function AIPlanPage() {
                 选择想要种在庭院中的树木（最多10棵），已选
                 <span className="font-semibold text-brand-green"> {form.treeIds.length} </span>棵
               </p>
+              {treesLoading ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-400">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  加载树木列表...
+                </div>
+              ) : trees.length === 0 ? (
+                <p className="py-12 text-center text-sm text-gray-400">暂无树木数据，请稍后重试</p>
+              ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {trees.map((tree) => {
                   const selected = form.treeIds.includes(tree.treeId);
@@ -429,6 +454,7 @@ export default function AIPlanPage() {
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
