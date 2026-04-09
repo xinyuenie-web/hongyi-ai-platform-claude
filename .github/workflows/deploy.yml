@@ -65,6 +65,10 @@ jobs:
           echo "NEXT_PUBLIC_API_URL=" >> .env
           echo "NODE_ENV=production" >> .env
 
+          # Stop Baota nginx to free port 80
+          nginx -s stop 2>/dev/null || true
+          systemctl stop nginx 2>/dev/null || true
+
           # Docker build and deploy
           docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
 
