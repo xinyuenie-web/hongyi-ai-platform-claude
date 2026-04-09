@@ -1,9 +1,16 @@
 import type { ApiResponse, ITree, IGardenStyleConfig, TreeListQuery, IQuotation, IOrder } from '@hongyi/shared';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+// SSR (Docker内部): 通过Docker网络直接访问server容器
+// 浏览器端: 通过nginx反向代理 (相对路径)
+const SERVER_API = process.env.INTERNAL_API_URL || 'http://server:4000';
+const CLIENT_API = process.env.NEXT_PUBLIC_API_URL || '';
+
+function getApiBase() {
+  return typeof window === 'undefined' ? SERVER_API : CLIENT_API;
+}
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-  const url = `${API_BASE}${endpoint}`;
+  const url = `${getApiBase()}${endpoint}`;
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
     ...options,

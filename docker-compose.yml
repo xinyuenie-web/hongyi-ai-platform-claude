@@ -59,6 +59,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      - INTERNAL_API_URL=http://server:4000
     depends_on:
       - server
     networks:
