@@ -81,12 +81,22 @@ export interface FluxFillResult {
 }
 
 /**
+ * Rewrite a fal.ai URL to go through our HK proxy.
+ * e.g., https://queue.fal.run/xxx → http://proxy:8462/fal/xxx
+ */
+function rewriteUrlForProxy(url: string, proxyUrl: string): string {
+  return url
+    .replace('https://queue.fal.run/', `${proxyUrl}/fal/`)
+    .replace('https://fal.run/', `${proxyUrl}/fal-api/`);
+}
+
+/**
  * Call Flux Fill API directly via HTTP (through HK proxy if configured).
  *
  * Uses fal.ai queue API:
- *   POST /fal-ai/flux-pro/v1/fill — submit job
- *   GET /fal-ai/flux-pro/v1/fill/requests/{id}/status — poll status
- *   GET /fal-ai/flux-pro/v1/fill/requests/{id} — get result
+ *   POST  — submit job → returns { request_id, status_url, response_url }
+ *   GET status_url — poll status
+ *   GET response_url — get result
  */
 async function callFluxFillAPI(
   prompt: string,
@@ -128,20 +138,41 @@ async function callFluxFillAPI(
   }
 
   const submitData: any = await submitRes.json();
-  const requestId = submitData.request_id;
+  console.log(`[Flux Fill] Submit response keys:`, Object.keys(submitData));
 
+  // Check if result is returned directly (synchronous)
+  if (submitData.images?.[0]?.url) {
+    console.log(`[Flux Fill] Got synchronous result`);
+    return submitData.images[0].url;
+  }
+
+  const requestId = submitData.request_id;
   if (!requestId) {
-    // Synchronous response — some endpoints return result directly
-    const directUrl = submitData.images?.[0]?.url;
-    if (directUrl) return directUrl;
-    console.error('[Flux Fill] No request_id in submit response:', JSON.stringify(submitData).slice(0, 300));
+    console.error('[Flux Fill] No request_id in response:', JSON.stringify(submitData).slice(0, 500));
     throw new Error('Flux Fill: no request_id returned');
   }
 
+  // Use the URLs from the response (fal.ai provides them)
+  let statusUrl = submitData.status_url;
+  let responseUrl = submitData.response_url;
+
+  // If we're using a proxy, rewrite the URLs
+  if (proxyUrl && statusUrl) {
+    statusUrl = rewriteUrlForProxy(statusUrl, proxyUrl);
+    responseUrl = rewriteUrlForProxy(responseUrl, proxyUrl);
+  }
+
+  // Fallback: construct URLs manually if not provided
+  if (!statusUrl) {
+    statusUrl = `${queueBase}/${modelId}/requests/${requestId}/status`;
+    responseUrl = `${queueBase}/${modelId}/requests/${requestId}`;
+  }
+
   console.log(`[Flux Fill] Job submitted, request_id: ${requestId}`);
+  console.log(`[Flux Fill] Status URL: ${statusUrl}`);
+  console.log(`[Flux Fill] Response URL: ${responseUrl}`);
 
   // Step 2: Poll for completion (max 5 minutes)
-  const statusBase = `${queueBase}/${modelId}/requests/${requestId}`;
   const maxWait = 300000; // 5 minutes
   const pollInterval = 3000; // 3 seconds
   const startTime = Date.now();
@@ -149,34 +180,43 @@ async function callFluxFillAPI(
   while (Date.now() - startTime < maxWait) {
     await new Promise((r) => setTimeout(r, pollInterval));
 
-    const statusRes = await fetch(`${statusBase}/status`, {
-      headers: { 'Authorization': `Key ${falKey}` },
-      signal: AbortSignal.timeout(15000),
-    });
+    try {
+      const statusRes = await fetch(statusUrl, {
+        headers: { 'Authorization': `Key ${falKey}` },
+        signal: AbortSignal.timeout(15000),
+      });
 
-    if (!statusRes.ok) {
-      console.warn(`[Flux Fill] Status check failed: ${statusRes.status}`);
-      continue;
+      if (!statusRes.ok) {
+        const errText = await statusRes.text().catch(() => '');
+        console.warn(`[Flux Fill] Status check ${statusRes.status}: ${errText.slice(0, 200)}`);
+        continue;
+      }
+
+      const statusData: any = await statusRes.json();
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log(`[Flux Fill] Status: ${statusData.status} (${elapsed}s)`);
+
+      if (statusData.status === 'COMPLETED') {
+        break;
+      } else if (statusData.status === 'FAILED') {
+        throw new Error(`Flux Fill job failed: ${statusData.error || 'unknown error'}`);
+      }
+    } catch (err: any) {
+      if (err.message?.includes('job failed')) throw err;
+      console.warn(`[Flux Fill] Poll error: ${err.message}`);
     }
-
-    const statusData: any = await statusRes.json();
-    console.log(`[Flux Fill] Status: ${statusData.status} (${Math.round((Date.now() - startTime) / 1000)}s)`);
-
-    if (statusData.status === 'COMPLETED') {
-      break;
-    } else if (statusData.status === 'FAILED') {
-      throw new Error(`Flux Fill job failed: ${statusData.error || 'unknown error'}`);
-    }
-    // IN_QUEUE or IN_PROGRESS — keep polling
   }
 
   // Step 3: Get result
-  const resultRes = await fetch(statusBase, {
+  console.log(`[Flux Fill] Fetching result from: ${responseUrl}`);
+  const resultRes = await fetch(responseUrl, {
     headers: { 'Authorization': `Key ${falKey}` },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!resultRes.ok) {
+    const errText = await resultRes.text().catch(() => '');
+    console.error(`[Flux Fill] Result fetch ${resultRes.status}: ${errText.slice(0, 300)}`);
     throw new Error(`Flux Fill result fetch failed: ${resultRes.status}`);
   }
 
