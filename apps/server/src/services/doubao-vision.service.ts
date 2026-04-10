@@ -154,7 +154,7 @@ ${options.userMessage ? `用户需求说明：${options.userMessage}` : ''}
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(60000), // 60s timeout
+    signal: AbortSignal.timeout(20000), // 20s timeout (reduce wait, often times out)
   });
 
   if (!res.ok) {
