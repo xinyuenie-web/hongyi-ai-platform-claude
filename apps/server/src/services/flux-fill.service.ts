@@ -309,20 +309,21 @@ export async function fluxFillAddTrees(
   const rawHeight = rawMeta.height!;
   console.log(`[Flux Fill] Original image: ${rawWidth}x${rawHeight} (${rawBuffer.length} bytes)`);
 
-  // Resize if too large — fal.ai works best with images ≤1536px, and base64 payload
-  // must stay reasonable (<10MB). Resize to max 1024px on longest side for reliability.
+  // Resize if too large — keep base64 payload reasonable for fal.ai
   const MAX_DIM = 1024;
   let imageBuffer: Buffer;
   let width: number;
   let height: number;
 
   if (rawWidth > MAX_DIM || rawHeight > MAX_DIM) {
-    const resized = sharp(rawBuffer).resize(MAX_DIM, MAX_DIM, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 });
-    imageBuffer = await resized.toBuffer();
-    const newMeta = await sharp(imageBuffer).metadata();
-    width = newMeta.width!;
-    height = newMeta.height!;
-    console.log(`[Flux Fill] Resized to: ${width}x${height} (${imageBuffer.length} bytes, was ${rawBuffer.length})`);
+    // Calculate target dimensions preserving aspect ratio
+    const scale = MAX_DIM / Math.max(rawWidth, rawHeight);
+    const targetW = Math.round(rawWidth * scale);
+    const targetH = Math.round(rawHeight * scale);
+    imageBuffer = await sharp(rawBuffer).resize(targetW, targetH).jpeg({ quality: 85 }).toBuffer();
+    width = targetW;
+    height = targetH;
+    console.log(`[Flux Fill] Resized: ${rawWidth}x${rawHeight} -> ${width}x${height} (${rawBuffer.length} -> ${imageBuffer.length} bytes)`);
   } else {
     imageBuffer = rawBuffer;
     width = rawWidth;
