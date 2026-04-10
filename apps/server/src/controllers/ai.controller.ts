@@ -463,30 +463,38 @@ export async function generatePlanHandler(req: Request, res: Response) {
     let treePlacements: Array<{ treeName: string; x: number; y: number; width: number; height: number }> = [];
 
     if (visionResult.status === 'fulfilled' && visionResult.value.treePlacement) {
-      // Use AI-analyzed coordinates
+      // Use AI-analyzed coordinates — clamp to realistic sizes
       treePlacements = visionResult.value.treePlacement
         .filter((tp) => typeof tp.x === 'number' && typeof tp.y === 'number' && typeof tp.width === 'number' && typeof tp.height === 'number')
         .map((tp) => ({
           treeName: tp.treeName,
-          x: Math.max(0, Math.min(1, tp.x)),
-          y: Math.max(0, Math.min(1, tp.y)),
-          width: Math.max(0.05, Math.min(0.5, tp.width)),
-          height: Math.max(0.1, Math.min(0.6, tp.height)),
+          x: Math.max(0, Math.min(0.9, tp.x)),
+          y: Math.max(0.2, Math.min(0.85, tp.y)),
+          // Clamp sizes: trees should be small relative to image to preserve original
+          width: Math.max(0.05, Math.min(0.18, tp.width)),
+          height: Math.max(0.08, Math.min(0.40, tp.height)),
         }));
       console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI analysis`);
+    }
+
+    // Limit to max 5 placements — too many masks degrades quality significantly
+    if (treePlacements.length > 5) {
+      console.log(`[GeneratePlan] Limiting ${treePlacements.length} placements to 5 (quality preservation)`);
+      treePlacements = treePlacements.slice(0, 5);
     }
 
     // Fallback: if AI didn't provide coordinates, generate default placements
     if (treePlacements.length === 0) {
       console.log('[GeneratePlan] No AI coordinates, using default placements');
-      const count = treeInfos.length;
-      treePlacements = treeInfos.map((t, i) => ({
+      const count = Math.min(treeInfos.length, 5); // max 5
+      const trees = treeInfos.slice(0, count);
+      treePlacements = trees.map((t, i) => ({
         treeName: t.name,
-        // Distribute trees evenly across the lower portion of the image
-        x: 0.1 + (0.7 / (count + 1)) * (i + 1) - 0.1,
-        y: 0.35,
-        width: 0.2,
-        height: 0.45,
+        // Distribute trees evenly across the lower portion, with small mask regions
+        x: 0.05 + (0.85 / (count + 1)) * (i + 1) - 0.06,
+        y: 0.40,
+        width: 0.12,
+        height: 0.30,
       }));
     }
 

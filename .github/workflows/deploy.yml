@@ -34,7 +34,7 @@ jobs:
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY'" << 'ENDSSH'
-          set -ex
+          set -e
           REPO_URL="$1"
           JWT_SECRET="$2"
           DOUBAO_API_KEY="$3"

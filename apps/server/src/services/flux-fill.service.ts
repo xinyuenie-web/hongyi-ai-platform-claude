@@ -30,17 +30,29 @@ async function generateMask(
     },
   });
 
-  // Build white rectangle overlays for each tree placement
+  // Build white elliptical overlays for each tree placement (tree-shaped mask)
   const overlays = placements.map((p) => {
     const x = Math.max(0, Math.round(p.x * imageWidth));
     const y = Math.max(0, Math.round(p.y * imageHeight));
     const w = Math.min(Math.round(p.width * imageWidth), imageWidth - x);
     const h = Math.min(Math.round(p.height * imageHeight), imageHeight - y);
 
-    // Create white rectangle SVG with soft rounded corners for natural blending
-    const rx = Math.round(Math.min(w, h) * 0.08);
+    // Use ellipse shape — more natural for tree silhouettes than rectangles
+    // Canopy: upper 70% as wide ellipse; trunk: lower 30% as narrow rectangle
+    const canopyH = Math.round(h * 0.7);
+    const trunkH = h - canopyH;
+    const trunkW = Math.max(Math.round(w * 0.3), 4);
+    const trunkX = Math.round((w - trunkW) / 2);
+    const cx = Math.round(w / 2);
+    const cy = Math.round(canopyH / 2);
+    const rx = Math.round(w / 2);
+    const ry = Math.round(canopyH / 2);
+
     const svg = Buffer.from(
-      `<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="white" rx="${rx}" ry="${rx}"/></svg>`,
+      `<svg width="${w}" height="${h}">` +
+      `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="white"/>` +
+      `<rect x="${trunkX}" y="${canopyH}" width="${trunkW}" height="${trunkH}" fill="white"/>` +
+      `</svg>`,
     );
     return { input: svg, left: x, top: y };
   });
@@ -53,18 +65,55 @@ async function generateMask(
 }
 
 /**
+ * Map Chinese tree names to English descriptions for better Flux Fill results.
+ */
+const TREE_DESCRIPTIONS: Record<string, string> = {
+  '罗汉松': 'Podocarpus macrophyllus bonsai tree with layered cloud-pruned canopy',
+  '造型罗汉松': 'Podocarpus macrophyllus bonsai tree with artistic cloud-pruned canopy layers',
+  '黑松': 'Japanese black pine (Pinus thunbergii) with spreading twisted branches',
+  '造型黑松': 'Japanese black pine bonsai with artistic windswept form',
+  '红花檵木': 'Chinese fringe flower (Loropetalum) with deep red-purple foliage',
+  '造型红花檵木': 'Chinese fringe flower shaped into ornamental topiary form with red leaves',
+  '榆树': 'Chinese elm (Ulmus parvifolia) with graceful spreading canopy',
+  '造型榆树桩': 'Chinese elm bonsai with thick artistic trunk and layered canopy',
+  '对节白蜡': 'Chinese ash bonsai (Fraxinus chinensis) with elegant branching structure',
+  '造型对节白蜡': 'Chinese ash bonsai with dramatic trunk and fine branch ramification',
+  '桂花': 'Osmanthus fragrans tree with dense evergreen canopy',
+  '造型桂花': 'Osmanthus fragrans shaped into ornamental form',
+  '红枫': 'Japanese maple (Acer palmatum) with delicate red foliage',
+  '紫薇': 'Crape myrtle with smooth bark and flowering canopy',
+  '造型紫薇': 'Crape myrtle shaped into artistic bonsai form',
+  '香樟': 'Camphor tree (Cinnamomum camphora) with broad evergreen canopy',
+  '金桂': 'Golden osmanthus tree with dense rounded canopy',
+  '银杏': 'Ginkgo biloba with fan-shaped golden leaves',
+  '小叶榕': 'Chinese banyan (Ficus microcarpa) with aerial roots and dense canopy',
+};
+
+function getTreeDescription(treeName: string): string {
+  // Try exact match first, then partial match
+  if (TREE_DESCRIPTIONS[treeName]) return TREE_DESCRIPTIONS[treeName];
+  for (const [key, desc] of Object.entries(TREE_DESCRIPTIONS)) {
+    if (treeName.includes(key) || key.includes(treeName)) return desc;
+  }
+  return `ornamental ${treeName} tree`;
+}
+
+/**
  * Build the inpainting prompt for Flux Fill.
  * Describes what to generate in the masked white areas.
+ * Uses English descriptions for better AI image generation quality.
  */
 function buildFluxPrompt(
   placements: TreePlacement[],
   styleName: string,
   userMessage: string,
 ): string {
-  const treeNames = placements.map((p) => p.treeName).join(', ');
-  const userDesc = userMessage?.trim() ? ` ${userMessage.trim()}.` : '';
+  // Build species-specific descriptions
+  const treeDescs = placements.map((p) => getTreeDescription(p.treeName));
+  const uniqueDescs = [...new Set(treeDescs)];
+  const treeList = uniqueDescs.join('; ');
 
-  return `Beautiful ornamental ${treeNames} trees naturally planted in a garden. The trees should have realistic proportions, natural lighting matching the scene, proper shadows on the ground, and blend seamlessly with the existing garden environment. ${styleName} garden style.${userDesc} Photorealistic, high quality, natural daylight.`;
+  return `${treeList}, planted naturally in the garden ground. The trees must have realistic proportions with natural trunk, branches and foliage. Match the existing scene lighting, cast natural shadows on the ground. Trees grow from the ground level, rooted in soil. Photorealistic photograph, high resolution, natural daylight, seamless blend with existing environment.`;
 }
 
 export interface FluxFillOptions {
