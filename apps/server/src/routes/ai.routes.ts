@@ -8,21 +8,26 @@ export const aiRouter = Router();
 // AI diagnostics — check all service dependencies
 aiRouter.get('/diagnostics', diagnosticsHandler);
 
-// Serve AI-generated images (bypasses nginx static file regex that catches *.jpg)
-aiRouter.get('/image/:filename', (req, res) => {
-  const { filename } = req.params;
-  // Security: only allow alphanumeric, dash, dot in filename
-  if (!/^[\w.-]+$/.test(filename)) {
-    return res.status(400).json({ error: 'Invalid filename' });
+// Serve AI-generated images. URL has NO file extension to avoid nginx *.jpg regex.
+// e.g., /api/v1/ai/image/ai-garden-1234 → serves ai-garden-1234.jpg
+aiRouter.get('/image/:imageId', (req, res) => {
+  const { imageId } = req.params;
+  if (!/^[\w-]+$/.test(imageId)) {
+    return res.status(400).json({ error: 'Invalid image ID' });
   }
-  const filePath = require('path').join(process.cwd(), 'uploads', 'ai-generated', filename);
-  res.setHeader('Cache-Control', 'public, max-age=604800');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.sendFile(filePath, (err: any) => {
-    if (err) {
-      res.status(404).json({ error: 'Image not found' });
+  const dir = require('path').join(process.cwd(), 'uploads', 'ai-generated');
+  const fs = require('fs');
+  // Try common extensions
+  for (const ext of ['.jpg', '.jpeg', '.png', '.webp']) {
+    const filePath = require('path').join(dir, imageId + ext);
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Content-Type', ext === '.png' ? 'image/png' : 'image/jpeg');
+      return res.sendFile(filePath);
     }
-  });
+  }
+  res.status(404).json({ error: 'Image not found' });
 });
 
 // Flux Fill end-to-end test (tiny image, ~$0.001 cost)

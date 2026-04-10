@@ -365,9 +365,11 @@ export async function fluxFillAddTrees(
   fs.writeFileSync(path.join(outputDir, filename), imageData);
   console.log(`[Flux Fill] Saved: ${filename} (${imageData.length} bytes)`);
 
+  // URL must NOT end with .jpg/.png — nginx regex intercepts those!
+  // Use filename without extension as the path parameter
+  const imageId = filename.replace(/\.[^.]+$/, '');
   return {
-    imageUrl: `/api/v1/ai/image/${filename}`,
+    imageUrl: `/api/v1/ai/image/${imageId}`,
     prompt,
-    maskSaved: `/api/v1/ai/image/${maskFilename}`,
   };
 }
