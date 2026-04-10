@@ -81,22 +81,11 @@ export interface FluxFillResult {
 }
 
 /**
- * Rewrite a fal.ai URL to go through our HK proxy.
- * e.g., https://queue.fal.run/xxx → http://proxy:8462/fal/xxx
- */
-function rewriteUrlForProxy(url: string, proxyUrl: string): string {
-  return url
-    .replace('https://queue.fal.run/', `${proxyUrl}/fal/`)
-    .replace('https://fal.run/', `${proxyUrl}/fal-api/`);
-}
-
-/**
- * Call Flux Fill API directly via HTTP (through HK proxy if configured).
+ * Call Flux Fill API using SYNCHRONOUS mode (no polling needed).
  *
- * Uses fal.ai queue API:
- *   POST  — submit job → returns { request_id, status_url, response_url }
- *   GET status_url — poll status
- *   GET response_url — get result
+ * Uses fal.ai synchronous endpoint: POST https://fal.run/...
+ * This blocks until the result is ready (~30-60s), avoiding polling issues.
+ * Through proxy: POST http://proxy:8462/fal-sync/...
  */
 async function callFluxFillAPI(
   prompt: string,
@@ -106,16 +95,17 @@ async function callFluxFillAPI(
   const falKey = process.env.FAL_KEY!;
   const proxyUrl = process.env.FAL_PROXY_URL; // e.g., http://43.129.236.142:8462
 
-  // Base URL: use proxy or direct fal.ai
-  const queueBase = proxyUrl
-    ? `${proxyUrl}/fal`     // proxy: /fal/ -> https://queue.fal.run/
-    : 'https://queue.fal.run';
+  // Synchronous endpoint: fal.run (NOT queue.fal.run)
+  const syncBase = proxyUrl
+    ? `${proxyUrl}/fal-sync`   // proxy: /fal-sync/ -> https://fal.run/
+    : 'https://fal.run';
 
   const modelId = 'fal-ai/flux-pro/v1/fill';
+  const url = `${syncBase}/${modelId}`;
 
-  // Step 1: Submit the job
-  console.log(`[Flux Fill] Submitting job to ${proxyUrl ? 'proxy' : 'fal.ai'}...`);
-  const submitRes = await fetch(`${queueBase}/${modelId}`, {
+  console.log(`[Flux Fill] Calling synchronous API: ${url.slice(0, 80)}...`);
+
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -128,106 +118,25 @@ async function callFluxFillAPI(
       num_images: 1,
       output_format: 'jpeg',
     }),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(300000), // 5 min timeout for sync
   });
 
-  if (!submitRes.ok) {
-    const errBody = await submitRes.text().catch(() => 'unknown');
-    console.error(`[Flux Fill] Submit error ${submitRes.status}:`, errBody);
-    throw new Error(`Flux Fill submit failed: ${submitRes.status}`);
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => 'unknown');
+    console.error(`[Flux Fill] API error ${res.status}:`, errBody.slice(0, 500));
+    throw new Error(`Flux Fill API failed: ${res.status}`);
   }
 
-  const submitData: any = await submitRes.json();
-  console.log(`[Flux Fill] Submit response keys:`, Object.keys(submitData));
+  const data: any = await res.json();
+  console.log(`[Flux Fill] Response keys:`, Object.keys(data));
 
-  // Check if result is returned directly (synchronous)
-  if (submitData.images?.[0]?.url) {
-    console.log(`[Flux Fill] Got synchronous result`);
-    return submitData.images[0].url;
-  }
-
-  const requestId = submitData.request_id;
-  if (!requestId) {
-    console.error('[Flux Fill] No request_id in response:', JSON.stringify(submitData).slice(0, 500));
-    throw new Error('Flux Fill: no request_id returned');
-  }
-
-  // Use the URLs from the response (fal.ai provides them)
-  let statusUrl = submitData.status_url;
-  let responseUrl = submitData.response_url;
-
-  // If we're using a proxy, rewrite the URLs
-  if (proxyUrl && statusUrl) {
-    statusUrl = rewriteUrlForProxy(statusUrl, proxyUrl);
-    responseUrl = rewriteUrlForProxy(responseUrl, proxyUrl);
-  }
-
-  // Fallback: construct URLs manually if not provided
-  if (!statusUrl) {
-    statusUrl = `${queueBase}/${modelId}/requests/${requestId}/status`;
-    responseUrl = `${queueBase}/${modelId}/requests/${requestId}`;
-  }
-
-  console.log(`[Flux Fill] Job submitted, request_id: ${requestId}`);
-  console.log(`[Flux Fill] Status URL: ${statusUrl}`);
-  console.log(`[Flux Fill] Response URL: ${responseUrl}`);
-
-  // Step 2: Poll for completion (max 5 minutes)
-  const maxWait = 300000; // 5 minutes
-  const pollInterval = 3000; // 3 seconds
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWait) {
-    await new Promise((r) => setTimeout(r, pollInterval));
-
-    try {
-      const statusRes = await fetch(statusUrl, {
-        headers: { 'Authorization': `Key ${falKey}` },
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!statusRes.ok) {
-        const errText = await statusRes.text().catch(() => '');
-        console.warn(`[Flux Fill] Status check ${statusRes.status}: ${errText.slice(0, 200)}`);
-        continue;
-      }
-
-      const statusData: any = await statusRes.json();
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      console.log(`[Flux Fill] Status: ${statusData.status} (${elapsed}s)`);
-
-      if (statusData.status === 'COMPLETED') {
-        break;
-      } else if (statusData.status === 'FAILED') {
-        throw new Error(`Flux Fill job failed: ${statusData.error || 'unknown error'}`);
-      }
-    } catch (err: any) {
-      if (err.message?.includes('job failed')) throw err;
-      console.warn(`[Flux Fill] Poll error: ${err.message}`);
-    }
-  }
-
-  // Step 3: Get result
-  console.log(`[Flux Fill] Fetching result from: ${responseUrl}`);
-  const resultRes = await fetch(responseUrl, {
-    headers: { 'Authorization': `Key ${falKey}` },
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!resultRes.ok) {
-    const errText = await resultRes.text().catch(() => '');
-    console.error(`[Flux Fill] Result fetch ${resultRes.status}: ${errText.slice(0, 300)}`);
-    throw new Error(`Flux Fill result fetch failed: ${resultRes.status}`);
-  }
-
-  const resultData: any = await resultRes.json();
-  const imageUrl = resultData.images?.[0]?.url;
-
+  const imageUrl = data.images?.[0]?.url;
   if (!imageUrl) {
-    console.error('[Flux Fill] No image in result:', JSON.stringify(resultData).slice(0, 500));
+    console.error('[Flux Fill] No image in response:', JSON.stringify(data).slice(0, 500));
     throw new Error('Flux Fill returned no image');
   }
 
+  console.log(`[Flux Fill] Image generated: ${imageUrl.slice(0, 80)}...`);
   return imageUrl;
 }
 
