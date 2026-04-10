@@ -459,45 +459,98 @@ export async function generatePlanHandler(req: Request, res: Response) {
     }
 
     // ============================================================
-    // STEP 2: Extract tree placement coordinates for Flux Fill
+    // STEP 2: Build tree placements with coordinates + cover images
     // ============================================================
-    let treePlacements: Array<{ treeName: string; x: number; y: number; width: number; height: number }> = [];
-
-    if (visionResult.status === 'fulfilled' && visionResult.value.treePlacement) {
-      // Use AI-analyzed coordinates — clamp to realistic sizes
-      treePlacements = visionResult.value.treePlacement
-        .filter((tp) => typeof tp.x === 'number' && typeof tp.y === 'number' && typeof tp.width === 'number' && typeof tp.height === 'number')
-        .map((tp) => ({
-          treeName: tp.treeName,
-          x: Math.max(0, Math.min(0.9, tp.x)),
-          y: Math.max(0.2, Math.min(0.85, tp.y)),
-          // Clamp sizes: trees should be small relative to image to preserve original
-          width: Math.max(0.05, Math.min(0.18, tp.width)),
-          height: Math.max(0.08, Math.min(0.40, tp.height)),
-        }));
-      console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI analysis`);
+    // Each placement needs: treeName, coverImage, x, y, width, height
+    // We build a unified list that has both coordinates AND image URLs
+    // so we don't need to match names later (which is error-prone).
+    interface TreePlacement {
+      treeName: string;
+      coverImage: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
     }
 
-    // Limit to max 5 placements — too many masks degrades quality significantly
+    // Helper: fuzzy match AI tree name to our selected trees
+    function findTreeByName(aiName: string): any {
+      // Exact match
+      let tree = selectedTrees.find((t: any) => t.name === aiName);
+      if (tree) return tree;
+      // Partial match: AI name contains DB name or vice versa
+      tree = selectedTrees.find((t: any) => t.name.includes(aiName) || aiName.includes(t.name));
+      if (tree) return tree;
+      // Species match
+      tree = selectedTrees.find((t: any) => t.species === aiName || aiName.includes(t.species));
+      return tree || null;
+    }
+
+    let treePlacements: TreePlacement[] = [];
+    const usedTreeIds = new Set<string>(); // prevent duplicates
+
+    if (visionResult.status === 'fulfilled' && visionResult.value.treePlacement) {
+      // Use AI-analyzed coordinates — enrich with cover images immediately
+      for (const tp of visionResult.value.treePlacement) {
+        if (typeof tp.x !== 'number' || typeof tp.y !== 'number' ||
+            typeof tp.width !== 'number' || typeof tp.height !== 'number') continue;
+
+        const tree = findTreeByName(tp.treeName);
+        const treeId = (tree as any)?.treeId;
+        if (treeId && usedTreeIds.has(treeId)) continue; // skip duplicate
+        if (treeId) usedTreeIds.add(treeId);
+
+        treePlacements.push({
+          treeName: (tree as any)?.name || tp.treeName,
+          coverImage: (tree as any)?.coverImage || '',
+          x: Math.max(0, Math.min(0.9, tp.x)),
+          y: Math.max(0.2, Math.min(0.85, tp.y)),
+          width: Math.max(0.05, Math.min(0.18, tp.width)),
+          height: Math.max(0.08, Math.min(0.40, tp.height)),
+        });
+      }
+      console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI (matched ${treePlacements.filter(p => p.coverImage).length} images)`);
+
+      // If AI didn't place all selected trees, add remaining with auto coordinates
+      for (const t of selectedTrees as any[]) {
+        if (usedTreeIds.has(t.treeId)) continue;
+        if (treePlacements.length >= 5) break;
+        usedTreeIds.add(t.treeId);
+        const idx = treePlacements.length;
+        treePlacements.push({
+          treeName: t.name,
+          coverImage: t.coverImage || '',
+          x: 0.05 + (0.85 / 6) * (idx + 1) - 0.06,
+          y: 0.40,
+          width: 0.12,
+          height: 0.30,
+        });
+      }
+    }
+
+    // Limit to max 5 placements
     if (treePlacements.length > 5) {
-      console.log(`[GeneratePlan] Limiting ${treePlacements.length} placements to 5 (quality preservation)`);
       treePlacements = treePlacements.slice(0, 5);
     }
 
-    // Fallback: if AI didn't provide coordinates, generate default placements
+    // Fallback: if no AI coordinates at all, generate default placements
     if (treePlacements.length === 0) {
       console.log('[GeneratePlan] No AI coordinates, using default placements');
-      const count = Math.min(treeInfos.length, 5); // max 5
-      const trees = treeInfos.slice(0, count);
-      treePlacements = trees.map((t, i) => ({
+      const count = Math.min(selectedTrees.length, 5);
+      const treesToPlace = (selectedTrees as any[]).slice(0, count);
+      treePlacements = treesToPlace.map((t, i) => ({
         treeName: t.name,
-        // Distribute trees evenly across the lower portion, with small mask regions
+        coverImage: t.coverImage || '',
         x: 0.05 + (0.85 / (count + 1)) * (i + 1) - 0.06,
         y: 0.40,
         width: 0.12,
         height: 0.30,
       }));
     }
+
+    console.log('[GeneratePlan] Final placements:', treePlacements.map(p =>
+      `${p.treeName} (img:${p.coverImage ? 'yes' : 'NO'}) @(${p.x.toFixed(2)},${p.y.toFixed(2)} ${p.width.toFixed(2)}x${p.height.toFixed(2)})`
+    ));
 
     // ============================================================
     // STEP 3: Generate effect image
@@ -508,18 +561,17 @@ export async function generatePlanHandler(req: Request, res: Response) {
     //   — AI generates trees from text description
     // ============================================================
     if (process.env.FAL_KEY) {
-      // Build tree composite items with cover images
-      const compositeItems = treePlacements.map((tp) => {
-        const tree = selectedTrees.find((t: any) => t.name === tp.treeName);
-        return {
+      // Filter placements that have cover images for composite
+      const compositeItems = treePlacements
+        .filter((tp) => tp.coverImage)
+        .map((tp) => ({
           treeName: tp.treeName,
-          imageUrl: (tree as any)?.coverImage || '',
+          imageUrl: tp.coverImage,
           x: tp.x,
           y: tp.y,
           width: tp.width,
           height: tp.height,
-        };
-      }).filter((item) => item.imageUrl); // only trees with cover images
+        }));
 
       // Strategy A: Tree photo composite (primary)
       if (compositeItems.length > 0) {
@@ -543,7 +595,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
         try {
           const fluxResult = await fluxFillAddTrees({
             gardenPhotoPath: gardenPhoto.path,
-            treePlacements,
+            treePlacements: treePlacements.map(({ coverImage, ...rest }) => rest),
             styleName,
             userMessage: message || '',
           });
