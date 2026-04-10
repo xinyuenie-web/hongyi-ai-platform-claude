@@ -111,46 +111,56 @@ async function callFluxFillAPI(
     'Authorization': `Key ${falKey}`,
   };
 
-  // Strategy 1: Synchronous API (preferred — simpler, no polling)
-  const syncBase = proxyUrl
-    ? `${proxyUrl}/fal-sync`   // proxy: /fal-sync/ -> https://fal.run/
-    : 'https://fal.run';
-  const syncUrl = `${syncBase}/${modelId}`;
-
-  console.log(`[Flux Fill] Strategy 1: Sync API via ${syncUrl.slice(0, 80)}...`);
-  try {
-    const res = await fetch(syncUrl, {
-      method: 'POST',
-      headers,
-      body: payload,
-      signal: AbortSignal.timeout(300000), // 5 min timeout
-    });
-
-    if (res.ok) {
-      const data: any = await res.json();
-      console.log(`[Flux Fill] Sync API response keys:`, Object.keys(data));
-      const imageUrl = data.images?.[0]?.url;
-      if (imageUrl) {
-        console.log(`[Flux Fill] Image generated via sync: ${imageUrl.slice(0, 80)}...`);
-        return imageUrl;
-      }
-      console.error('[Flux Fill] Sync API: no image in response:', JSON.stringify(data).slice(0, 300));
-    } else {
-      const errBody = await res.text().catch(() => 'unknown');
-      console.error(`[Flux Fill] Sync API error ${res.status}:`, errBody.slice(0, 500));
-      if (res.status === 401 || res.status === 403) {
-        throw new Error(`Flux Fill认证失败(${res.status}): 请检查FAL_KEY是否有效、余额是否充足`);
-      }
-    }
-  } catch (err: any) {
-    if (err.message.includes('认证失败')) throw err;
-    console.warn(`[Flux Fill] Sync API failed: ${err.message}`);
+  // Try sync API with each available endpoint
+  // Strategy 1: Direct fal.run (sometimes works from China!)
+  // Strategy 2: Via HK proxy /fal-sync/
+  const syncEndpoints: Array<{ name: string; url: string }> = [];
+  // Always try direct first (it's faster when it works)
+  syncEndpoints.push({ name: 'direct fal.run', url: `https://fal.run/${modelId}` });
+  if (proxyUrl) {
+    syncEndpoints.push({ name: 'HK proxy fal-sync', url: `${proxyUrl}/fal-sync/${modelId}` });
   }
 
-  // Strategy 2: Queue API (submit + poll)
-  const queueBase = proxyUrl
-    ? `${proxyUrl}/fal`   // proxy: /fal/ -> https://queue.fal.run/
-    : 'https://queue.fal.run';
+  for (const endpoint of syncEndpoints) {
+    console.log(`[Flux Fill] Trying sync: ${endpoint.name} → ${endpoint.url.slice(0, 80)}...`);
+    try {
+      const res = await fetch(endpoint.url, {
+        method: 'POST',
+        headers,
+        body: payload,
+        signal: AbortSignal.timeout(300000), // 5 min timeout
+      });
+
+      if (res.ok) {
+        const data: any = await res.json();
+        console.log(`[Flux Fill] ${endpoint.name} response keys:`, Object.keys(data));
+        const imageUrl = data.images?.[0]?.url;
+        if (imageUrl) {
+          console.log(`[Flux Fill] Image generated via ${endpoint.name}: ${imageUrl.slice(0, 80)}...`);
+          return imageUrl;
+        }
+        console.error(`[Flux Fill] ${endpoint.name}: no image in response`);
+      } else {
+        const errBody = await res.text().catch(() => 'unknown');
+        console.error(`[Flux Fill] ${endpoint.name} error ${res.status}:`, errBody.slice(0, 300));
+        if (res.status === 401 || res.status === 403) {
+          throw new Error(`Flux Fill认证失败(${res.status}): 请检查FAL_KEY是否有效、余额是否充足`);
+        }
+      }
+    } catch (err: any) {
+      if (err.message.includes('认证失败')) throw err;
+      console.warn(`[Flux Fill] ${endpoint.name} failed: ${err.message}`);
+    }
+  }
+
+  // Strategy 3: Queue API (submit + poll) — last resort
+  const queueEndpoints: Array<{ name: string; base: string }> = [];
+  queueEndpoints.push({ name: 'direct queue', base: 'https://queue.fal.run' });
+  if (proxyUrl) {
+    queueEndpoints.push({ name: 'proxy queue', base: `${proxyUrl}/fal` });
+  }
+
+  const queueBase = queueEndpoints[0].base;
   const submitUrl = `${queueBase}/${modelId}`;
 
   console.log(`[Flux Fill] Strategy 2: Queue API via ${submitUrl.slice(0, 80)}...`);
@@ -234,36 +244,39 @@ async function callFluxFillAPI(
 async function downloadFalImage(imageUrl: string): Promise<Buffer> {
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  // Strategy 1: Download through HK proxy (fal.media is blocked in China)
+  // Strategy 1: Direct download (try first — sometimes works from China, and it's faster)
+  console.log(`[Flux Fill] Download strategy 1: direct → ${imageUrl.slice(0, 100)}...`);
+  try {
+    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      console.log(`[Flux Fill] Direct download succeeded (${buf.length} bytes)`);
+      return buf;
+    }
+    console.warn(`[Flux Fill] Direct download HTTP ${res.status}`);
+  } catch (err: any) {
+    console.warn(`[Flux Fill] Direct download failed: ${err.message}`);
+  }
+
+  // Strategy 2: Download through HK proxy (fal.media is blocked in China)
   if (proxyUrl) {
     try {
-      // Extract hostname and path from the fal.media URL
-      // e.g., https://v3b.fal.media/files/b/xxx.jpg → /fal-cdn/v3b.fal.media/files/b/xxx.jpg
       const urlObj = new URL(imageUrl);
       const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
-      console.log(`[Flux Fill] Downloading via proxy: ${cdnUrl.slice(0, 120)}...`);
+      console.log(`[Flux Fill] Download strategy 2: proxy → ${cdnUrl.slice(0, 120)}...`);
       const res = await fetch(cdnUrl, { signal: AbortSignal.timeout(60000) });
       if (res.ok) {
-        console.log(`[Flux Fill] Proxy download succeeded`);
-        return Buffer.from(await res.arrayBuffer());
+        const buf = Buffer.from(await res.arrayBuffer());
+        console.log(`[Flux Fill] Proxy download succeeded (${buf.length} bytes)`);
+        return buf;
       }
-      console.warn(`[Flux Fill] Proxy download failed: ${res.status}`);
+      console.warn(`[Flux Fill] Proxy download HTTP ${res.status}`);
     } catch (err: any) {
       console.warn(`[Flux Fill] Proxy download error: ${err.message}`);
     }
   }
 
-  // Strategy 2: Direct download (fallback, may work sometimes)
-  console.log(`[Flux Fill] Trying direct download: ${imageUrl.slice(0, 100)}...`);
-  try {
-    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(60000) });
-    if (res.ok) {
-      return Buffer.from(await res.arrayBuffer());
-    }
-    throw new Error(`Direct download failed: ${res.status}`);
-  } catch (err: any) {
-    throw new Error(`All download methods failed: ${err.message}`);
-  }
+  throw new Error(`图片下载失败: 直连和代理均不可用。图片URL: ${imageUrl.slice(0, 80)}`);
 }
 
 /**

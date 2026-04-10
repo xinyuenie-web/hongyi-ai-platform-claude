@@ -23,11 +23,11 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
     checks: {} as Record<string, any>,
   };
 
-  // Check 1: HK Proxy health
+  // Check 1: HK Proxy health (longer timeout - proxy can be slow to connect)
   const proxyUrl = process.env.FAL_PROXY_URL;
   if (proxyUrl) {
     try {
-      const r = await fetch(`${proxyUrl}/health`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${proxyUrl}/health`, { signal: AbortSignal.timeout(15000) });
       const body = await r.text();
       results.checks.hkProxy = { status: 'OK', response: body, url: proxyUrl };
     } catch (err: any) {
@@ -38,32 +38,51 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
     results.checks.hkProxy = { status: 'SKIP', hint: 'FAL_PROXY_URL not configured' };
   }
 
-  // Check 2: fal.ai API auth (lightweight — just test auth, expect 422 for invalid input)
-  if (process.env.FAL_KEY) {
-    const syncBase = proxyUrl ? `${proxyUrl}/fal-sync` : 'https://fal.run';
-    const testUrl = `${syncBase}/fal-ai/flux-pro/v1/fill`;
+  // Check 2a: fal.ai via proxy
+  if (process.env.FAL_KEY && proxyUrl) {
+    const proxyTestUrl = `${proxyUrl}/fal-sync/fal-ai/flux-pro/v1/fill`;
     try {
-      const r = await fetch(testUrl, {
+      const r = await fetch(proxyTestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${process.env.FAL_KEY}` },
+        body: JSON.stringify({ prompt: 'test' }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const body = await r.text().catch(() => '');
+      if (r.status === 422) {
+        results.checks.falViaProxy = { status: 'OK', detail: 'Proxy→fal.run works (422 = expected)' };
+      } else if (r.status === 401 || r.status === 403) {
+        results.checks.falViaProxy = { status: 'AUTH_FAIL', httpStatus: r.status, body: body.slice(0, 200) };
+      } else {
+        results.checks.falViaProxy = { status: 'UNEXPECTED', httpStatus: r.status, body: body.slice(0, 200) };
+      }
+    } catch (err: any) {
+      results.checks.falViaProxy = { status: 'FAIL', error: err.message, hint: '通过HK代理访问fal.ai失败' };
+    }
+  }
+
+  // Check 2b: fal.ai DIRECT (without proxy — test if accessible from China)
+  if (process.env.FAL_KEY) {
+    try {
+      const r = await fetch('https://fal.run/fal-ai/flux-pro/v1/fill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${process.env.FAL_KEY}` },
         body: JSON.stringify({ prompt: 'test' }),
         signal: AbortSignal.timeout(15000),
       });
       const body = await r.text().catch(() => '');
-      // 422 = auth OK but invalid input (expected!), 401/403 = auth problem
       if (r.status === 422) {
-        results.checks.falApi = { status: 'OK', detail: 'Auth valid, API reachable (422 = expected for test)' };
+        results.checks.falDirect = { status: 'OK', detail: 'Direct fal.run works! Proxy may not be needed.' };
       } else if (r.status === 401 || r.status === 403) {
-        results.checks.falApi = { status: 'AUTH_FAIL', httpStatus: r.status, body: body.slice(0, 200) };
+        results.checks.falDirect = { status: 'AUTH_FAIL', httpStatus: r.status, body: body.slice(0, 200) };
       } else {
-        results.checks.falApi = { status: 'UNEXPECTED', httpStatus: r.status, body: body.slice(0, 200) };
+        results.checks.falDirect = { status: 'UNEXPECTED', httpStatus: r.status, body: body.slice(0, 200) };
       }
     } catch (err: any) {
-      results.checks.falApi = { status: 'FAIL', error: err.message, url: testUrl,
-        hint: proxyUrl ? '通过代理访问fal.ai失败。可能是代理配置问题' : '直接访问fal.ai失败(中国需要代理)' };
+      results.checks.falDirect = { status: 'FAIL', error: err.message, hint: '直连fal.ai不可用(预期, 中国需代理)' };
     }
   } else {
-    results.checks.falApi = { status: 'SKIP', hint: 'FAL_KEY not configured' };
+    results.checks.falDirect = { status: 'SKIP', hint: 'FAL_KEY not configured' };
   }
 
   // Check 3: Doubao Vision API
