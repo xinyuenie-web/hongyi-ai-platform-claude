@@ -209,7 +209,7 @@ export interface AIPlanResult {
 export async function generateAIPlan(data: {
   name: string;
   phone: string;
-  styleId: string;
+  styleId?: string;
   gardenPhoto: File;
   treeIds: string[];
   message: string;
@@ -217,7 +217,7 @@ export async function generateAIPlan(data: {
   const formData = new FormData();
   formData.append('name', data.name);
   formData.append('phone', data.phone);
-  formData.append('styleId', data.styleId);
+  if (data.styleId) formData.append('styleId', data.styleId);
   formData.append('photos', data.gardenPhoto);
   formData.append('treeIds', JSON.stringify(data.treeIds));
   formData.append('message', data.message);

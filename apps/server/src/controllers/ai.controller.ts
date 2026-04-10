@@ -92,13 +92,6 @@ export async function generatePlanHandler(req: Request, res: Response) {
         error: { code: 'INVALID_INPUT', message: '请输入正确的手机号' },
       });
     }
-    if (!styleId) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_INPUT', message: '请选择庭院风格' },
-      });
-    }
-
     let treeIds: string[];
     try {
       treeIds = JSON.parse(treeIdsStr || '[]');
@@ -133,15 +126,12 @@ export async function generatePlanHandler(req: Request, res: Response) {
     // --- Fetch data ---
     const [selectedTrees, style] = await Promise.all([
       Tree.find({ treeId: { $in: treeIds } }).lean(),
-      GardenStyle.findOne({ styleId }).lean(),
+      styleId ? GardenStyle.findOne({ styleId }).lean() : Promise.resolve(null),
     ]);
 
-    if (!style) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'NOT_FOUND', message: '未找到所选庭院风格' },
-      });
-    }
+    // Default style info when none selected
+    const styleName = (style as any)?.name || '自然';
+    const styleType = (style as any)?.type || 'chinese';
 
     if (selectedTrees.length === 0) {
       return res.status(400).json({
@@ -155,7 +145,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
     Inquiry.create({
       name: name.trim(),
       phone,
-      message: message || `AI方案生成 - ${(style as any).name} - ${selectedTrees.map((t: any) => t.name).join('、')}`,
+      message: message || `AI方案生成 - ${styleName} - ${selectedTrees.map((t: any) => t.name).join('、')}`,
       photos: [gardenPhotoUrl],
       source: 'website_form',
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
@@ -172,7 +162,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       crown: t.specs?.crown || 150,
     }));
 
-    const analysisMessage = message || `${(style as any).name}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
+    const analysisMessage = message || `${styleName}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
 
     // Prepare garden photo base64 for vision model
     let gardenPhotoBase64: string;
@@ -190,7 +180,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
         gardenPhotoPath: gardenPhoto.path,
         treeImageUrls,
         treeInfos,
-        styleType: (style as any).type,
+        styleType: styleType,
         userMessage: message || '',
       }),
       // 2. Seed-2.0-pro — AI multimodal analysis (may fail, graceful degradation)
@@ -198,7 +188,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
         ? analyzeGardenWithAI({
             gardenPhotoBase64,
             treeInfos,
-            styleName: (style as any).name,
+            styleName: styleName,
             userMessage: message || '',
           })
         : Promise.reject(new Error('Garden photo not available for vision')),

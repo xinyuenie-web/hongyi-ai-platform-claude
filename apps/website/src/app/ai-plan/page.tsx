@@ -21,9 +21,9 @@ import {
   ImageIcon,
   RefreshCw,
 } from 'lucide-react';
-import { getGardenStyles, getTreeList, generateAIPlan, type AIPlanResult, type AIDesignAdvice } from '@/lib/api';
+import { getTreeList, generateAIPlan, type AIPlanResult, type AIDesignAdvice } from '@/lib/api';
 import { formatPrice } from '@hongyi/shared';
-import type { ITree, IGardenStyleConfig } from '@hongyi/shared';
+import type { ITree } from '@hongyi/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -36,7 +36,6 @@ function resolveImage(src: string): string {
 
 const STEPS = [
   { label: '基本信息', icon: User },
-  { label: '选择风格', icon: Palette },
   { label: '上传庭院', icon: Camera },
   { label: '选择树木', icon: TreePine },
   { label: '需求描述', icon: MessageSquare },
@@ -60,9 +59,7 @@ export default function AIPlanPage() {
   });
   const [gardenPhoto, setGardenPhoto] = useState<File | null>(null);
   const [gardenPreview, setGardenPreview] = useState<string>('');
-  const [styles, setStyles] = useState<IGardenStyleConfig[]>([]);
   const [trees, setTrees] = useState<ITree[]>([]);
-  const [stylesLoading, setStylesLoading] = useState(true);
   const [treesLoading, setTreesLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AIPlanResult | null>(null);
@@ -70,14 +67,8 @@ export default function AIPlanPage() {
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load styles and trees
+  // Load trees
   useEffect(() => {
-    getGardenStyles()
-      .then((res) => {
-        if (res.success && res.data) setStyles(res.data);
-      })
-      .catch(() => {})
-      .finally(() => setStylesLoading(false));
     getTreeList({ status: 'available', limit: 50 })
       .then((res) => {
         if (res.success && res.data) setTrees(res.data);
@@ -125,10 +116,9 @@ export default function AIPlanPage() {
   function canAdvance(): boolean {
     switch (step) {
       case 0: return !!form.name.trim() && /^1[3-9]\d{9}$/.test(form.phone);
-      case 1: return !!form.styleId;
-      case 2: return !!gardenPhoto;
-      case 3: return form.treeIds.length > 0;
-      case 4: return true; // message is optional
+      case 1: return !!gardenPhoto;
+      case 2: return form.treeIds.length > 0;
+      case 3: return true; // message is optional
       default: return false;
     }
   }
@@ -140,9 +130,8 @@ export default function AIPlanPage() {
         if (!form.phone.trim()) return '请输入手机号';
         if (!/^1[3-9]\d{9}$/.test(form.phone)) return '请输入正确的手机号';
         return '';
-      case 1: return !form.styleId ? '请选择一种庭院风格' : '';
-      case 2: return !gardenPhoto ? '请上传一张庭院照片' : '';
-      case 3: return form.treeIds.length === 0 ? '请至少选择一棵树木' : '';
+      case 1: return !gardenPhoto ? '请上传一张庭院照片' : '';
+      case 2: return form.treeIds.length === 0 ? '请至少选择一棵树木' : '';
       default: return '';
     }
   }
@@ -154,7 +143,7 @@ export default function AIPlanPage() {
       return;
     }
     setError('');
-    if (step < 5) setStep(step + 1);
+    if (step < 4) setStep(step + 1);
   }
 
   function handleBack() {
@@ -192,8 +181,6 @@ export default function AIPlanPage() {
     removePhoto();
     setError('');
   }
-
-  const selectedStyle = styles.find((s) => s.styleId === form.styleId);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -284,67 +271,8 @@ export default function AIPlanPage() {
             </div>
           )}
 
-          {/* Step 1: Select Garden Style */}
+          {/* Step 1: Upload Garden Photo */}
           {step === 1 && (
-            <div>
-              <h2 className="mb-2 text-lg font-bold text-brand-navy">选择参考庭院风格</h2>
-              <p className="mb-5 text-sm text-gray-500">选择您喜欢的庭院风格，AI将以此为基础生成效果图</p>
-              {stylesLoading ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-400">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  加载庭院风格...
-                </div>
-              ) : styles.length === 0 ? (
-                <p className="py-12 text-center text-sm text-gray-400">暂无庭院风格数据，请稍后重试</p>
-              ) : (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                {styles.map((style) => {
-                  const selected = form.styleId === style.styleId;
-                  return (
-                    <button
-                      key={style.styleId}
-                      type="button"
-                      onClick={() => setForm({ ...form, styleId: style.styleId })}
-                      className={`group overflow-hidden rounded-xl border-2 text-left transition-all ${
-                        selected
-                          ? 'border-brand-navy ring-2 ring-brand-navy/20'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="relative aspect-[4/3] bg-gray-100">
-                        {style.image ? (
-                          <Image
-                            src={resolveImage(style.image)}
-                            alt={style.name}
-                            fill
-                            className="object-cover"
-                            sizes="(max-width: 768px) 50vw, 33vw"
-                          />
-                        ) : (
-                          <div className="flex h-full items-center justify-center">
-                            <Palette className="h-8 w-8 text-gray-300" />
-                          </div>
-                        )}
-                        {selected && (
-                          <div className="absolute right-2 top-2 rounded-full bg-brand-navy p-1">
-                            <CheckCircle className="h-4 w-4 text-white" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="p-3">
-                        <h3 className="text-sm font-semibold text-gray-800">{style.name}</h3>
-                        <p className="mt-1 line-clamp-2 text-xs text-gray-500">{style.description}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 2: Upload Garden Photo */}
-          {step === 2 && (
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">上传庭院照片</h2>
               <p className="mb-5 text-sm text-gray-500">
@@ -393,8 +321,8 @@ export default function AIPlanPage() {
             </div>
           )}
 
-          {/* Step 3: Select Trees */}
-          {step === 3 && (
+          {/* Step 2: Select Trees */}
+          {step === 2 && (
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">选择心仪树木</h2>
               <p className="mb-5 text-sm text-gray-500">
@@ -458,8 +386,8 @@ export default function AIPlanPage() {
             </div>
           )}
 
-          {/* Step 4: Description */}
-          {step === 4 && (
+          {/* Step 3: Description */}
+          {step === 3 && (
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">描述您的需求</h2>
               <p className="mb-5 text-sm text-gray-500">
@@ -495,7 +423,7 @@ export default function AIPlanPage() {
           )}
 
           {/* Step 5: Generate / Result */}
-          {step === 5 && !result && (
+          {step === 4 && !result && (
             <div className="text-center">
               <h2 className="mb-4 text-lg font-bold text-brand-navy">AI方案生成</h2>
 
@@ -504,10 +432,6 @@ export default function AIPlanPage() {
                 <div className="flex justify-between">
                   <span className="text-gray-500">姓名</span>
                   <span className="font-medium text-gray-800">{form.name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">庭院风格</span>
-                  <span className="font-medium text-gray-800">{selectedStyle?.name || '-'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">庭院照片</span>
@@ -547,7 +471,7 @@ export default function AIPlanPage() {
           )}
 
           {/* Result Display */}
-          {step === 5 && result && (
+          {step === 4 && result && (
             <div className="space-y-6">
               {/* Generated Image */}
               {result.generatedImage && (
@@ -815,7 +739,7 @@ export default function AIPlanPage() {
           {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
 
           {/* Navigation Buttons */}
-          {step < 5 && (
+          {step < 4 && (
             <div className="mt-6 flex gap-3">
               {step > 0 && (
                 <button onClick={handleBack} className="btn-outline flex-1">
@@ -827,13 +751,13 @@ export default function AIPlanPage() {
                 onClick={handleNext}
                 className="btn-primary flex-1"
               >
-                {step === 4 ? '确认并生成' : '下一步'}
+                {step === 3 ? '确认并生成' : '下一步'}
                 <ChevronRight className="ml-1 h-4 w-4" />
               </button>
             </div>
           )}
 
-          {step === 5 && !result && !loading && (
+          {step === 4 && !result && !loading && (
             <div className="mt-4">
               <button onClick={handleBack} className="btn-outline w-full">
                 <ChevronLeft className="mr-1 h-4 w-4" />
