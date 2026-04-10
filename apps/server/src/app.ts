@@ -59,6 +59,15 @@ export function createApp(): express.Application {
   app.use('/api/v1/orders', orderRouter);
   app.use('/api/v1/quotations', quotationRouter);
 
+  // Serve uploaded files through /api/uploads/ path (bypasses nginx static file regex)
+  app.use('/api/uploads', express.static(uploadsPath, {
+    setHeaders: (res) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+    },
+  }));
+
   // Health check
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

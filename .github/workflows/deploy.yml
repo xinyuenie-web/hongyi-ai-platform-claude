@@ -93,10 +93,6 @@ jobs:
           }
           echo "=== Docker build completed ==="
 
-          # Restart nginx to pick up config changes (bind mount + restart)
-          docker compose restart nginx || true
-          echo "=== Nginx restarted ==="
-
           # Health check
           sleep 15
           docker compose ps

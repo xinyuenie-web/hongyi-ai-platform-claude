@@ -366,8 +366,8 @@ export async function fluxFillAddTrees(
   console.log(`[Flux Fill] Saved: ${filename} (${imageData.length} bytes)`);
 
   return {
-    imageUrl: `/uploads/ai-generated/${filename}`,
+    imageUrl: `/api/uploads/ai-generated/${filename}`,
     prompt,
-    maskSaved: `/uploads/ai-generated/${maskFilename}`,
+    maskSaved: `/api/uploads/ai-generated/${maskFilename}`,
   };
 }
