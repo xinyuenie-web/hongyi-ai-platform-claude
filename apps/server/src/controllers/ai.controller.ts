@@ -115,6 +115,142 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
 }
 
 /**
+ * GET /api/v1/ai/test-flux
+ * End-to-end test of Flux Fill pipeline using a tiny synthetic image.
+ * Returns detailed step-by-step results for debugging.
+ */
+export async function testFluxHandler(_req: Request, res: Response) {
+  const steps: Array<{ step: string; status: string; detail?: string; ms?: number }> = [];
+  const start = Date.now();
+
+  try {
+    // Step 1: Check env
+    const falKey = process.env.FAL_KEY;
+    if (!falKey) {
+      steps.push({ step: 'env', status: 'FAIL', detail: 'FAL_KEY not set' });
+      return res.json({ success: false, steps });
+    }
+    steps.push({ step: 'env', status: 'OK', detail: `FAL_KEY: ${falKey.slice(0, 8)}...` });
+
+    // Step 2: Create a tiny test image (64x64 green square) using sharp
+    const sharp = (await import('sharp')).default;
+    const t2 = Date.now();
+    const testImage = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 34, g: 139, b: 34 } },
+    }).jpeg().toBuffer();
+    const testMask = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).composite([{
+      input: Buffer.from('<svg width="30" height="30"><rect width="30" height="30" fill="white"/></svg>'),
+      left: 17, top: 17,
+    }]).png().toBuffer();
+    steps.push({ step: 'create-test-images', status: 'OK', detail: `image:${testImage.length}b mask:${testMask.length}b`, ms: Date.now() - t2 });
+
+    const imageBase64 = `data:image/jpeg;base64,${testImage.toString('base64')}`;
+    const maskBase64 = `data:image/png;base64,${testMask.toString('base64')}`;
+    const proxyUrl = process.env.FAL_PROXY_URL;
+    const modelId = 'fal-ai/flux-pro/v1/fill';
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Key ${falKey}` };
+    const body = JSON.stringify({
+      prompt: 'A small green tree with natural leaves',
+      image_url: imageBase64,
+      mask_url: maskBase64,
+      num_images: 1,
+      output_format: 'jpeg',
+    });
+
+    // Step 3: Try direct fal.run
+    const t3 = Date.now();
+    let generatedImageUrl: string | null = null;
+    try {
+      const r = await fetch(`https://fal.run/${modelId}`, {
+        method: 'POST', headers, body,
+        signal: AbortSignal.timeout(120000),
+      });
+      const rBody = await r.text();
+      if (r.ok) {
+        const data = JSON.parse(rBody);
+        generatedImageUrl = data.images?.[0]?.url || null;
+        steps.push({ step: 'fal-direct', status: 'OK', detail: `Image URL: ${generatedImageUrl?.slice(0, 60)}...`, ms: Date.now() - t3 });
+      } else {
+        steps.push({ step: 'fal-direct', status: 'FAIL', detail: `HTTP ${r.status}: ${rBody.slice(0, 200)}`, ms: Date.now() - t3 });
+      }
+    } catch (err: any) {
+      steps.push({ step: 'fal-direct', status: 'FAIL', detail: err.message, ms: Date.now() - t3 });
+    }
+
+    // Step 3b: Try via proxy if direct failed
+    if (!generatedImageUrl && proxyUrl) {
+      const t3b = Date.now();
+      try {
+        const r = await fetch(`${proxyUrl}/fal-sync/${modelId}`, {
+          method: 'POST', headers, body,
+          signal: AbortSignal.timeout(120000),
+        });
+        const rBody = await r.text();
+        if (r.ok) {
+          const data = JSON.parse(rBody);
+          generatedImageUrl = data.images?.[0]?.url || null;
+          steps.push({ step: 'fal-proxy', status: 'OK', detail: `Image URL: ${generatedImageUrl?.slice(0, 60)}...`, ms: Date.now() - t3b });
+        } else {
+          steps.push({ step: 'fal-proxy', status: 'FAIL', detail: `HTTP ${r.status}: ${rBody.slice(0, 200)}`, ms: Date.now() - t3b });
+        }
+      } catch (err: any) {
+        steps.push({ step: 'fal-proxy', status: 'FAIL', detail: err.message, ms: Date.now() - t3b });
+      }
+    }
+
+    if (!generatedImageUrl) {
+      steps.push({ step: 'generate', status: 'FAIL', detail: 'No image generated from any endpoint' });
+      return res.json({ success: false, steps, totalMs: Date.now() - start });
+    }
+
+    // Step 4: Download generated image
+    const t4 = Date.now();
+    let downloadedSize = 0;
+
+    // Try direct download
+    try {
+      const r = await fetch(generatedImageUrl, { signal: AbortSignal.timeout(30000) });
+      if (r.ok) {
+        const buf = Buffer.from(await r.arrayBuffer());
+        downloadedSize = buf.length;
+        steps.push({ step: 'download-direct', status: 'OK', detail: `${downloadedSize} bytes`, ms: Date.now() - t4 });
+      } else {
+        steps.push({ step: 'download-direct', status: 'FAIL', detail: `HTTP ${r.status}`, ms: Date.now() - t4 });
+      }
+    } catch (err: any) {
+      steps.push({ step: 'download-direct', status: 'FAIL', detail: err.message, ms: Date.now() - t4 });
+    }
+
+    // Try proxy download if direct failed
+    if (downloadedSize === 0 && proxyUrl) {
+      const t4b = Date.now();
+      try {
+        const urlObj = new URL(generatedImageUrl);
+        const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
+        const r = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
+        if (r.ok) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          downloadedSize = buf.length;
+          steps.push({ step: 'download-proxy', status: 'OK', detail: `${downloadedSize} bytes`, ms: Date.now() - t4b });
+        } else {
+          steps.push({ step: 'download-proxy', status: 'FAIL', detail: `HTTP ${r.status}`, ms: Date.now() - t4b });
+        }
+      } catch (err: any) {
+        steps.push({ step: 'download-proxy', status: 'FAIL', detail: err.message, ms: Date.now() - t4b });
+      }
+    }
+
+    const allOk = downloadedSize > 0;
+    return res.json({ success: allOk, steps, totalMs: Date.now() - start });
+  } catch (err: any) {
+    steps.push({ step: 'unexpected', status: 'FAIL', detail: err.message });
+    return res.json({ success: false, steps, totalMs: Date.now() - start });
+  }
+}
+
+/**
  * POST /api/v1/ai/analyze-garden
  * Body: { message: string, photos?: string[] }
  * or multipart with photos field
