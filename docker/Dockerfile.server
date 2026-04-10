@@ -1,68 +1,78 @@
 # ============================================================
 # 红艺花木 - Express API Server
-# Multi-stage build for minimal image size
-# Optimized layer caching: deps change rarely, code changes often
+# Multi-stage build optimized for Chinese network environment
 # ============================================================
 
-# --- Stage 1: Install dependencies (cached unless package.json changes) ---
+# --- Stage 1: Build (compile TypeScript) ---
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Use China npm mirror for reliability
+RUN npm config set registry https://registry.npmmirror.com
+
+# Copy workspace structure
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/ packages/shared/
+COPY apps/server/ apps/server/
+
+# Install all dependencies (including devDeps for build)
+RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root 2>/dev/null || \
+    npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root
+
+# Build shared package then server
+RUN cd packages/shared && npx tsc || true
+RUN cd apps/server && npx tsc || true
+
+# --- Stage 2: Production deps only ---
 FROM node:20-alpine AS deps
 
 WORKDIR /app
 
-# Copy ONLY package files first (for layer caching)
-COPY package.json package-lock.json tsconfig.base.json ./
+# Use China npm mirror
+RUN npm config set registry https://registry.npmmirror.com
+
+# Copy ONLY package files for production deps install (layer caching!)
+COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/server/package.json apps/server/
 
-# Install all dependencies (cached if package.json unchanged)
-RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root 2>/dev/null || \
-    npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root
+# Install production deps only (cached unless package.json changes)
+RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root --omit=dev 2>/dev/null || \
+    npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root --omit=dev
 
-# --- Stage 2: Build (copy source, compile TS) ---
-FROM deps AS builder
+# Install tsx for running TypeScript
+RUN npm install -g tsx
 
-# Now copy source code (this layer changes often but deps are cached)
-COPY packages/shared/ packages/shared/
-COPY apps/server/ apps/server/
-
-# Build shared package
-RUN cd packages/shared && npx tsc || true
-
-# Build server (compile TS)
-RUN cd apps/server && npx tsc || true
-
-# --- Stage 3: Production ---
+# --- Stage 3: Final image ---
 FROM node:20-alpine AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy workspace root
-COPY package.json package-lock.json tsconfig.base.json ./
+# Copy production deps from deps stage (cached!)
+COPY --from=deps /app/node_modules node_modules/
+COPY --from=deps /app/packages/shared/node_modules packages/shared/node_modules/
+COPY --from=deps /app/apps/server/node_modules apps/server/node_modules/
+COPY --from=deps /usr/local/lib/node_modules/tsx /usr/local/lib/node_modules/tsx
+COPY --from=deps /usr/local/bin/tsx /usr/local/bin/tsx
 
-# Copy shared built output
+# Copy built source from builder (this layer changes with code, but deps are cached)
 COPY --from=builder /app/packages/shared/ packages/shared/
-
-# Copy server source + built
 COPY --from=builder /app/apps/server/ apps/server/
+
+# Copy workspace root files
+COPY package.json tsconfig.base.json ./
 
 # Copy seed data files (CSV)
 COPY *.csv ./
-
-# Install production deps only
-RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root --omit=dev 2>/dev/null || \
-    npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root --omit=dev
-
-# Install tsx globally for running TypeScript directly
-RUN npm install -g tsx
 
 # Create uploads directories
 RUN mkdir -p uploads/inquiries uploads/ai-generated
 
 EXPOSE 4000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:4000/api/health || exit 1
 
