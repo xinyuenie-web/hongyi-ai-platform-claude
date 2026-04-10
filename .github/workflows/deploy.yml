@@ -79,6 +79,11 @@ jobs:
           nginx -s stop 2>/dev/null || true
           systemctl stop nginx 2>/dev/null || true
 
+          # Clean up Docker to free disk space
+          docker system prune -f 2>/dev/null || true
+          docker image prune -a --filter "until=24h" -f 2>/dev/null || true
+          echo "=== Docker cleanup done, disk: $(df -h / | tail -1 | awk '{print $4}') free ==="
+
           # Docker build and deploy
           echo "=== Docker build starting ==="
           docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans 2>&1 || {
