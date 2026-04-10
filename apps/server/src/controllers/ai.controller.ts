@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
 import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
 import { fluxFillAddTrees } from '../services/flux-fill.service.js';
+import { compositeTreesOnGarden } from '../services/tree-composite.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
@@ -499,25 +500,61 @@ export async function generatePlanHandler(req: Request, res: Response) {
     }
 
     // ============================================================
-    // STEP 3: Call Flux Fill (inpainting) — preserves original photo!
+    // STEP 3: Generate effect image
+    // Strategy A (primary): Composite real tree photos onto garden
+    //   — removes background from each tree's product photo, overlays on garden
+    //   — shows the ACTUAL trees the user selected
+    // Strategy B (fallback): Flux Fill inpainting
+    //   — AI generates trees from text description
     // ============================================================
     if (process.env.FAL_KEY) {
-      console.log('[GeneratePlan] Step 3: Calling Flux Fill for inpainting...');
-      try {
-        const fluxResult = await fluxFillAddTrees({
-          gardenPhotoPath: gardenPhoto.path,
-          treePlacements,
-          styleName,
-          userMessage: message || '',
-        });
-        response.generatedImage = fluxResult.imageUrl;
-        response.prompt = fluxResult.prompt;
-        console.log('[GeneratePlan] Flux Fill image generated successfully!');
-      } catch (fluxErr: any) {
-        const errMsg = fluxErr.message || String(fluxErr);
-        console.error('[GeneratePlan] Flux Fill failed:', errMsg);
-        console.error('[GeneratePlan] Flux Fill stack:', fluxErr.stack?.slice(0, 500));
-        response.imageError = errMsg; // Include error detail for debugging
+      // Build tree composite items with cover images
+      const compositeItems = treePlacements.map((tp) => {
+        const tree = selectedTrees.find((t: any) => t.name === tp.treeName);
+        return {
+          treeName: tp.treeName,
+          imageUrl: (tree as any)?.coverImage || '',
+          x: tp.x,
+          y: tp.y,
+          width: tp.width,
+          height: tp.height,
+        };
+      }).filter((item) => item.imageUrl); // only trees with cover images
+
+      // Strategy A: Tree photo composite (primary)
+      if (compositeItems.length > 0) {
+        console.log(`[GeneratePlan] Step 3A: Compositing ${compositeItems.length} real tree photos...`);
+        try {
+          const compositeResult = await compositeTreesOnGarden({
+            gardenPhotoPath: gardenPhoto.path,
+            trees: compositeItems,
+          });
+          response.generatedImage = compositeResult.imageUrl;
+          console.log('[GeneratePlan] Tree composite succeeded!');
+        } catch (compositeErr: any) {
+          console.error('[GeneratePlan] Tree composite failed:', compositeErr.message);
+          console.error('[GeneratePlan] Falling back to Flux Fill...');
+        }
+      }
+
+      // Strategy B: Flux Fill fallback (if composite failed or no tree images)
+      if (!response.generatedImage) {
+        console.log('[GeneratePlan] Step 3B: Calling Flux Fill for inpainting...');
+        try {
+          const fluxResult = await fluxFillAddTrees({
+            gardenPhotoPath: gardenPhoto.path,
+            treePlacements,
+            styleName,
+            userMessage: message || '',
+          });
+          response.generatedImage = fluxResult.imageUrl;
+          response.prompt = fluxResult.prompt;
+          console.log('[GeneratePlan] Flux Fill image generated successfully!');
+        } catch (fluxErr: any) {
+          const errMsg = fluxErr.message || String(fluxErr);
+          console.error('[GeneratePlan] Flux Fill also failed:', errMsg);
+          response.imageError = errMsg;
+        }
       }
     } else {
       console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');
