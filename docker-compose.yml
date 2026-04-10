@@ -42,6 +42,8 @@ services:
       - DOUBAO_VISION_API_KEY=${DOUBAO_VISION_API_KEY:-}
       - DOUBAO_SEEDREAM_MODEL=${DOUBAO_SEEDREAM_MODEL:-doubao-seedream-5-0-lite-260128}
       - DOUBAO_VISION_MODEL=${DOUBAO_VISION_MODEL:-doubao-seed-2-0-pro-260215}
+      - FAL_KEY=${FAL_KEY:-}
+      - FAL_PROXY_URL=${FAL_PROXY_URL:-}
     depends_on:
       mongo:
         condition: service_healthy

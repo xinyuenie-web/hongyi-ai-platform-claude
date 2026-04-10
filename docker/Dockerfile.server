@@ -52,8 +52,8 @@ RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspa
 # Install tsx globally for running TypeScript directly
 RUN npm install -g tsx
 
-# Create uploads directory
-RUN mkdir -p uploads/inquiries
+# Create uploads directories
+RUN mkdir -p uploads/inquiries uploads/ai-generated
 
 EXPOSE 4000
 

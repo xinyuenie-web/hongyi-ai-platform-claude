@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
-import { generateGardenImage } from '../services/doubao-ai.service.js';
 import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
+import { fluxFillAddTrees } from '../services/flux-fill.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
@@ -70,10 +70,16 @@ function recordUsage(phone: string) {
  * Multipart form data:
  *  - name (string, required)
  *  - phone (string, required)
- *  - styleId (string, required)
- *  - gardenPhoto (file, required)
+ *  - styleId (string, optional)
+ *  - photos (file, required — garden photo)
  *  - treeIds (JSON string array, required)
  *  - message (string, optional)
+ *
+ * NEW FLOW (serial, because Flux Fill depends on AI analysis results):
+ * 1. Parallel: Seed-2.0-pro analysis (with coordinates) + rule-based analysis (fallback)
+ * 2. Extract tree placement coordinates from AI analysis
+ * 3. Call Flux Fill (original photo + mask from coordinates + prompt) — TRUE inpainting
+ * 4. Return: effect image (original preserved!) + analysis report
  */
 export async function generatePlanHandler(req: Request, res: Response) {
   try {
@@ -129,7 +135,6 @@ export async function generatePlanHandler(req: Request, res: Response) {
       styleId ? GardenStyle.findOne({ styleId }).lean() : Promise.resolve(null),
     ]);
 
-    // Default style info when none selected
     const styleName = (style as any)?.name || '自然';
     const styleType = (style as any)?.type || 'chinese';
 
@@ -150,11 +155,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       source: 'website_form',
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
 
-    // --- Prepare data for AI models ---
-    const treeImageUrls = selectedTrees
-      .map((t: any) => t.coverImage)
-      .filter(Boolean);
-
+    // --- Prepare data ---
     const treeInfos = selectedTrees.map((t: any) => ({
       name: t.name,
       species: t.species,
@@ -173,31 +174,21 @@ export async function generatePlanHandler(req: Request, res: Response) {
       gardenPhotoBase64 = '';
     }
 
-    // --- Run 3-way parallel: Seedream + Seed-2.0-pro + rule analysis ---
-    const [imageResult, visionResult, ruleResult] = await Promise.allSettled([
-      // 1. Seedream 5.0 lite — generate effect image
-      generateGardenImage({
-        gardenPhotoPath: gardenPhoto.path,
-        treeImageUrls,
-        treeInfos,
-        styleType: styleType,
-        userMessage: message || '',
-      }),
-      // 2. Seed-2.0-pro — AI multimodal analysis (may fail, graceful degradation)
+    // ============================================================
+    // STEP 1: Parallel — AI vision analysis + rule-based analysis
+    // ============================================================
+    console.log('[GeneratePlan] Step 1: Running AI analysis + rule-based analysis in parallel...');
+    const [visionResult, ruleResult] = await Promise.allSettled([
       gardenPhotoBase64
         ? analyzeGardenWithAI({
             gardenPhotoBase64,
             treeInfos,
-            styleName: styleName,
+            styleName,
             userMessage: message || '',
           })
         : Promise.reject(new Error('Garden photo not available for vision')),
-      // 3. Rule-based analysis — always available as fallback
       analyzeGarden(analysisMessage, [gardenPhotoUrl]),
     ]);
-
-    // Record usage after successful call
-    recordUsage(phone);
 
     const response: any = {
       generatedImage: null,
@@ -206,16 +197,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       prompt: null,
     };
 
-    // Image generation result
-    if (imageResult.status === 'fulfilled') {
-      response.generatedImage = imageResult.value.imageUrl;
-      response.prompt = imageResult.value.prompt;
-      console.log('[GeneratePlan] Seedream image generated successfully');
-    } else {
-      console.error('[GeneratePlan] Seedream image failed:', imageResult.reason?.message || imageResult.reason);
-    }
-
-    // AI vision analysis (Seed-2.0-pro) — preferred over rule-based
+    // AI vision analysis result
     if (visionResult.status === 'fulfilled') {
       response.aiAnalysis = visionResult.value;
       console.log('[GeneratePlan] Seed-2.0-pro AI analysis succeeded');
@@ -223,7 +205,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       console.error('[GeneratePlan] Seed-2.0-pro analysis failed:', visionResult.reason?.message || visionResult.reason);
     }
 
-    // Rule-based analysis — fallback if AI analysis fails
+    // Rule-based analysis (always useful as fallback)
     if (ruleResult.status === 'fulfilled') {
       response.analysis = ruleResult.value;
       console.log('[GeneratePlan] Rule-based analysis succeeded');
@@ -231,7 +213,66 @@ export async function generatePlanHandler(req: Request, res: Response) {
       console.error('[GeneratePlan] Rule-based analysis failed:', ruleResult.reason?.message || ruleResult.reason);
     }
 
-    // At least one analysis should succeed, or image should be generated
+    // ============================================================
+    // STEP 2: Extract tree placement coordinates for Flux Fill
+    // ============================================================
+    let treePlacements: Array<{ treeName: string; x: number; y: number; width: number; height: number }> = [];
+
+    if (visionResult.status === 'fulfilled' && visionResult.value.treePlacement) {
+      // Use AI-analyzed coordinates
+      treePlacements = visionResult.value.treePlacement
+        .filter((tp) => typeof tp.x === 'number' && typeof tp.y === 'number' && typeof tp.width === 'number' && typeof tp.height === 'number')
+        .map((tp) => ({
+          treeName: tp.treeName,
+          x: Math.max(0, Math.min(1, tp.x)),
+          y: Math.max(0, Math.min(1, tp.y)),
+          width: Math.max(0.05, Math.min(0.5, tp.width)),
+          height: Math.max(0.1, Math.min(0.6, tp.height)),
+        }));
+      console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI analysis`);
+    }
+
+    // Fallback: if AI didn't provide coordinates, generate default placements
+    if (treePlacements.length === 0) {
+      console.log('[GeneratePlan] No AI coordinates, using default placements');
+      const count = treeInfos.length;
+      treePlacements = treeInfos.map((t, i) => ({
+        treeName: t.name,
+        // Distribute trees evenly across the lower portion of the image
+        x: 0.1 + (0.7 / (count + 1)) * (i + 1) - 0.1,
+        y: 0.35,
+        width: 0.2,
+        height: 0.45,
+      }));
+    }
+
+    // ============================================================
+    // STEP 3: Call Flux Fill (inpainting) — preserves original photo!
+    // ============================================================
+    if (process.env.FAL_KEY) {
+      console.log('[GeneratePlan] Step 3: Calling Flux Fill for inpainting...');
+      try {
+        const fluxResult = await fluxFillAddTrees({
+          gardenPhotoPath: gardenPhoto.path,
+          treePlacements,
+          styleName,
+          userMessage: message || '',
+        });
+        response.generatedImage = fluxResult.imageUrl;
+        response.prompt = fluxResult.prompt;
+        console.log('[GeneratePlan] Flux Fill image generated successfully!');
+      } catch (fluxErr: any) {
+        console.error('[GeneratePlan] Flux Fill failed:', fluxErr.message || fluxErr);
+        // Flux Fill failed, but we still have analysis results
+      }
+    } else {
+      console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');
+    }
+
+    // Record usage
+    recordUsage(phone);
+
+    // At least one result should be available
     if (!response.generatedImage && !response.aiAnalysis && !response.analysis) {
       return res.status(500).json({
         success: false,

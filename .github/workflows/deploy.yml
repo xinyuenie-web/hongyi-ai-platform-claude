@@ -30,14 +30,16 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           DOUBAO_VISION_API_KEY: ${{ secrets.DOUBAO_VISION_API_KEY }}
+          FAL_KEY: ${{ secrets.FAL_KEY }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
-          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY'" << 'ENDSSH'
+          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY'" << 'ENDSSH'
           set -e
           REPO_URL="$1"
           JWT_SECRET="$2"
           DOUBAO_API_KEY="$3"
           DOUBAO_VISION_API_KEY="$4"
+          FAL_KEY="$5"
           PROJECT_DIR="/opt/hongyi"
 
           echo "=== Deploy started at $(date) ==="
@@ -68,6 +70,8 @@ jobs:
           echo "JWT_SECRET=${JWT_SECRET}" > .env
           echo "DOUBAO_API_KEY=${DOUBAO_API_KEY}" >> .env
           echo "DOUBAO_VISION_API_KEY=${DOUBAO_VISION_API_KEY}" >> .env
+          echo "FAL_KEY=${FAL_KEY}" >> .env
+          echo "FAL_PROXY_URL=http://43.129.236.142:8462" >> .env
           echo "NEXT_PUBLIC_API_URL=" >> .env
           echo "NODE_ENV=production" >> .env
 
