@@ -12,28 +12,20 @@ interface TreeInfo {
 }
 
 /**
- * Build prompt that instructs Seedream to ADD trees to the existing garden photo.
+ * Build an EDITING prompt for Seedream 5.0.
  *
- * Key principle: The user's original garden photo is sacred — house, architecture,
- * walls, driveways, sky must remain EXACTLY as-is. Only ADD trees to empty spaces.
+ * Critical: This must be an editing INSTRUCTION ("在这张照片中添加X"),
+ * NOT a scene description ("一栋别墅前有X").
+ * Seedream 5.0 has built-in CoT reasoning and precise image editing.
  */
 function buildPrompt(trees: TreeInfo[], userMessage: string): string {
   const treeList = trees
-    .map((t) => `${t.species}造型树（高${(t.height / 100).toFixed(1)}米、冠幅${(t.crown / 100).toFixed(1)}米）`)
+    .map((t) => `一棵${t.species}造型树`)
     .join('、');
-
-  let layoutDesc = '自然摆放在庭院空地上';
-  if (trees.length === 1) {
-    layoutDesc = '种植在庭院空地中央作为主景树';
-  } else if (trees.length === 2) {
-    layoutDesc = '分别种植在庭院空地两侧，对称布局';
-  } else if (trees.length <= 5) {
-    layoutDesc = '错落有致地种植在庭院空地上，形成层次感';
-  }
 
   const userDesc = userMessage?.trim() ? `。额外要求：${userMessage.trim()}` : '';
 
-  return `在这张庭院照片的基础上，严格保持原有房屋建筑、围墙、地面、天空等所有原始元素完全不变，仅在庭院空地区域添加${treeList}，${layoutDesc}。树木必须真实自然地融入原有场景中，光影与原照片一致，透视比例正确。写实摄影风格，超高清画质${userDesc}`;
+  return `请在这张照片中的庭院空地上添加${treeList}。严格要求：原有的房屋、建筑、围墙、道路、地面、天空必须完全保持不变，只在空地区域种上树木。树木要自然融入场景，光影和透视与原照片一致${userDesc}`;
 }
 
 /**
@@ -71,12 +63,13 @@ export interface GenerateImageResult {
 }
 
 /**
- * Call Doubao Seedream 5.0 lite to generate a garden design image.
+ * Call Doubao Seedream 5.0 lite to EDIT a garden photo by adding trees.
  *
- * Strategy:
- * - Use "remake" reference type to preserve the original photo as much as possible
- * - reference_strength set to 0.95 (maximum preservation of original)
- * - Prompt explicitly instructs: keep everything, ONLY add trees
+ * KEY FIX: Use the `image` parameter (Seedream 5.0 image editing format),
+ * NOT `image_reference` (which was the Seedream 4.x reference format).
+ *
+ * With `image`, Seedream 5.0 enters image-to-image editing mode:
+ * it preserves the original photo and applies the prompt as an edit instruction.
  */
 export async function generateGardenImage(
   options: GenerateImageOptions,
@@ -97,26 +90,21 @@ export async function generateGardenImage(
     throw new Error('无法读取庭院照片');
   }
 
+  // Seedream 5.0 image editing format:
+  // - `image`: pass original photo directly (triggers image-to-image editing mode)
+  // - `prompt`: editing instruction (NOT scene description)
   const requestBody: Record<string, any> = {
     model: DOUBAO_MODEL,
     prompt,
-    response_format: 'url',
+    image: gardenPhotoDataUri,
     size: '2K',
+    response_format: 'url',
     watermark: false,
-    // "remake" type: regenerate based on original image, preserving its content
-    // High strength (0.95) = maximum preservation of original photo
-    image_reference: [
-      {
-        image_data: [{ image: gardenPhotoDataUri }],
-        reference_type: 'remake',
-        reference_strength: 0.95,
-      },
-    ],
   };
 
   console.log(`[Doubao Seedream] Model: ${DOUBAO_MODEL}`);
+  console.log(`[Doubao Seedream] Mode: image-to-image editing (using 'image' param)`);
   console.log(`[Doubao Seedream] Prompt: ${prompt.slice(0, 150)}...`);
-  console.log(`[Doubao Seedream] Reference type: remake, strength: 0.95`);
 
   const res = await fetch(DOUBAO_API_URL, {
     method: 'POST',
