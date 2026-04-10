@@ -8,6 +8,23 @@ export const aiRouter = Router();
 // AI diagnostics — check all service dependencies
 aiRouter.get('/diagnostics', diagnosticsHandler);
 
+// Serve AI-generated images (bypasses nginx static file regex that catches *.jpg)
+aiRouter.get('/image/:filename', (req, res) => {
+  const { filename } = req.params;
+  // Security: only allow alphanumeric, dash, dot in filename
+  if (!/^[\w.-]+$/.test(filename)) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const filePath = require('path').join(process.cwd(), 'uploads', 'ai-generated', filename);
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.sendFile(filePath, (err: any) => {
+    if (err) {
+      res.status(404).json({ error: 'Image not found' });
+    }
+  });
+});
+
 // Flux Fill end-to-end test (tiny image, ~$0.001 cost)
 aiRouter.get('/test-flux', testFluxHandler);
 
