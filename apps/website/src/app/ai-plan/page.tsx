@@ -561,12 +561,11 @@ export default function AIPlanPage() {
                     className="relative w-full overflow-hidden rounded-xl border-2 border-brand-navy/20"
                   >
                     <div className="relative aspect-square bg-gray-100">
-                      <Image
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
                         src={result.generatedImage}
                         alt="AI生成的庭院效果图"
-                        fill
-                        className="object-cover"
-                        sizes="100vw"
+                        className="absolute inset-0 h-full w-full object-cover"
                       />
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3 text-center">
@@ -855,11 +854,10 @@ export default function AIPlanPage() {
             <X className="h-6 w-6" />
           </button>
           <div className="relative max-h-[90vh] max-w-[90vw]">
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={fullscreenImage}
               alt="AI效果图大图"
-              width={1024}
-              height={1024}
               className="max-h-[90vh] w-auto rounded-lg object-contain"
             />
           </div>

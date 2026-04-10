@@ -15,6 +15,23 @@ const nextConfig = {
         protocol: 'http',
         hostname: '106.53.112.26',
       },
+      // 豆包Seedream生成图片CDN域名
+      {
+        protocol: 'https',
+        hostname: '**.volces.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.volccdn.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.byteimg.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.bytedance.com',
+      },
     ],
     unoptimized: process.env.NODE_ENV === 'development',
   },
