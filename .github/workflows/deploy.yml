@@ -79,20 +79,38 @@ jobs:
           nginx -s stop 2>/dev/null || true
           systemctl stop nginx 2>/dev/null || true
 
-          # Docker build and deploy
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
+          # Docker build and deploy (with error capture)
+          echo "=== Docker build starting ==="
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans 2>&1 || {
+            echo "=== Docker build FAILED ==="
+            echo "--- Server container logs ---"
+            docker compose logs --tail=50 server 2>&1 || true
+            echo "--- Docker ps ---"
+            docker ps -a 2>&1 || true
+            echo "--- Disk space ---"
+            df -h / 2>&1 || true
+            exit 1
+          }
+          echo "=== Docker build completed ==="
 
           # Health check
           sleep 15
           docker compose ps
-          for i in 1 2 3 4 5; do
+          HEALTH_OK=0
+          for i in 1 2 3 4 5 6; do
             if curl -sf http://localhost/api/health > /dev/null 2>&1; then
               echo "Health check passed!"
+              HEALTH_OK=1
               break
             fi
-            echo "Waiting... ($i/5)"
+            echo "Waiting... ($i/6)"
+            docker compose logs --tail=5 server 2>&1 || true
             sleep 5
           done
+          if [ "$HEALTH_OK" = "0" ]; then
+            echo "=== Health check FAILED — server logs ==="
+            docker compose logs --tail=30 server 2>&1 || true
+          fi
 
           # Seed data on first deploy
           TREE_COUNT=$(docker compose exec -T server wget -qO- http://localhost:4000/api/v1/trees/meta/stats 2>/dev/null | grep -o '"total":[0-9]*' | grep -o '[0-9]*' || echo "0")
