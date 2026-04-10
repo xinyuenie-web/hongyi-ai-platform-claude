@@ -79,9 +79,9 @@ jobs:
           nginx -s stop 2>/dev/null || true
           systemctl stop nginx 2>/dev/null || true
 
-          # Docker build and deploy (with error capture)
+          # Docker build and deploy (force-recreate ensures nginx picks up config changes)
           echo "=== Docker build starting ==="
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans 2>&1 || {
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --force-recreate --remove-orphans 2>&1 || {
             echo "=== Docker build FAILED ==="
             echo "--- Server container logs ---"
             docker compose logs --tail=50 server 2>&1 || true
@@ -92,10 +92,6 @@ jobs:
             exit 1
           }
           echo "=== Docker build completed ==="
-
-          # Force recreate nginx to pick up config changes
-          docker compose up -d --force-recreate --no-deps nginx
-          echo "=== Nginx container recreated ==="
 
           # Health check
           sleep 15
