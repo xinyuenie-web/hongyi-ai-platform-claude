@@ -150,28 +150,30 @@ async function callFluxFillAPI(
 async function downloadFalImage(imageUrl: string): Promise<Buffer> {
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  // Strategy 1: Download through HK proxy (for China servers)
-  if (proxyUrl) {
-    const downloadUrl = `${proxyUrl}/fal-download/?url=${encodeURIComponent(imageUrl)}`;
-    console.log(`[Flux Fill] Downloading via proxy: ${downloadUrl.slice(0, 120)}...`);
-    try {
-      const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(60000) });
-      if (res.ok) {
-        return Buffer.from(await res.arrayBuffer());
-      }
-      console.warn(`[Flux Fill] Proxy download failed: ${res.status}, trying direct...`);
-    } catch (err: any) {
-      console.warn(`[Flux Fill] Proxy download error: ${err.message}, trying direct...`);
+  // Strategy 1: Direct download (fal.media CDN works in China!)
+  console.log(`[Flux Fill] Downloading directly: ${imageUrl.slice(0, 100)}...`);
+  try {
+    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(60000) });
+    if (res.ok) {
+      return Buffer.from(await res.arrayBuffer());
     }
+    console.warn(`[Flux Fill] Direct download failed: ${res.status}`);
+  } catch (err: any) {
+    console.warn(`[Flux Fill] Direct download error: ${err.message}`);
   }
 
-  // Strategy 2: Direct download (works outside China or as fallback)
-  console.log(`[Flux Fill] Downloading directly: ${imageUrl.slice(0, 100)}...`);
-  const res = await fetch(imageUrl, { signal: AbortSignal.timeout(60000) });
-  if (!res.ok) {
-    throw new Error(`Download failed: ${res.status}`);
+  // Strategy 2: Download through HK proxy as fallback
+  if (proxyUrl) {
+    const downloadUrl = `${proxyUrl}/fal-download/?url=${encodeURIComponent(imageUrl)}`;
+    console.log(`[Flux Fill] Trying proxy download: ${downloadUrl.slice(0, 120)}...`);
+    const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(60000) });
+    if (res.ok) {
+      return Buffer.from(await res.arrayBuffer());
+    }
+    throw new Error(`Both direct and proxy download failed: ${res.status}`);
   }
-  return Buffer.from(await res.arrayBuffer());
+
+  throw new Error('Download failed and no proxy configured');
 }
 
 /**

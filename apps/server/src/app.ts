@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -26,13 +27,27 @@ export function createApp(): express.Application {
   app.use(express.urlencoded({ extended: true }));
 
   // Serve uploaded files (uploads volume in Docker)
-  app.use('/uploads', express.static('uploads', {
+  // Use absolute path to avoid cwd resolution issues
+  const uploadsPath = path.join(process.cwd(), 'uploads');
+  console.log(`[Static] Serving uploads from: ${uploadsPath}`);
+  app.use('/uploads', express.static(uploadsPath, {
     setHeaders: (res) => {
-      // Allow cross-origin access for images
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       res.setHeader('Access-Control-Allow-Origin', '*');
     },
+    fallthrough: true,
   }));
+
+  // Explicit fallback route for ai-generated images (belt-and-suspenders)
+  app.get('/uploads/ai-generated/:filename', (req, res) => {
+    const filePath = path.join(uploadsPath, 'ai-generated', req.params.filename);
+    res.sendFile(filePath, (err) => {
+      if (err) {
+        console.error(`[Static] File not found: ${filePath}`);
+        res.status(404).json({ error: 'File not found' });
+      }
+    });
+  });
 
   // API routes
   app.use('/api/v1/trees', treeRouter);
