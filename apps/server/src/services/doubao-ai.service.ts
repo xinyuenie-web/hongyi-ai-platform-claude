@@ -4,14 +4,6 @@ import path from 'path';
 const DOUBAO_API_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
 const DOUBAO_MODEL = process.env.DOUBAO_SEEDREAM_MODEL || 'doubao-seedream-5-0-lite-260128';
 
-const STYLE_DESCRIPTIONS: Record<string, string> = {
-  modern: '现代简约',
-  chinese: '新中式',
-  european: '欧式古典',
-  japanese: '日式禅意',
-  tuscan: '田园托斯卡纳',
-};
-
 interface TreeInfo {
   name: string;
   species: string;
@@ -20,32 +12,28 @@ interface TreeInfo {
 }
 
 /**
- * Build a detailed prompt for Seedream image generation.
- * The prompt focuses on the user's garden with their selected trees —
- * style only influences wording, NOT visual references.
+ * Build prompt that instructs Seedream to ADD trees to the existing garden photo.
+ *
+ * Key principle: The user's original garden photo is sacred — house, architecture,
+ * walls, driveways, sky must remain EXACTLY as-is. Only ADD trees to empty spaces.
  */
-function buildPrompt(styleType: string, trees: TreeInfo[], userMessage: string): string {
-  const styleDesc = STYLE_DESCRIPTIONS[styleType] || '中式';
-
+function buildPrompt(trees: TreeInfo[], userMessage: string): string {
   const treeList = trees
-    .map((t) => `一棵高${(t.height / 100).toFixed(1)}米冠幅${(t.crown / 100).toFixed(1)}米的${t.species}造型树`)
+    .map((t) => `${t.species}造型树（高${(t.height / 100).toFixed(1)}米、冠幅${(t.crown / 100).toFixed(1)}米）`)
     .join('、');
 
-  let layoutDesc = '树木自然错落分布于庭院中';
+  let layoutDesc = '自然摆放在庭院空地上';
   if (trees.length === 1) {
-    layoutDesc = '作为庭院主景树居中种植';
+    layoutDesc = '种植在庭院空地中央作为主景树';
   } else if (trees.length === 2) {
-    layoutDesc = '两棵树对称种植于庭院入口两侧';
+    layoutDesc = '分别种植在庭院空地两侧，对称布局';
   } else if (trees.length <= 5) {
-    layoutDesc = '树木错落有致地分布在庭院前方，形成层次分明的景观带';
-  } else {
-    layoutDesc = '多棵造型树木群植于庭院各处，营造丰富的立体景观层次';
+    layoutDesc = '错落有致地种植在庭院空地上，形成层次感';
   }
 
-  // 用户自定义描述优先
-  const userDesc = userMessage?.trim() ? `，${userMessage.trim()}` : '';
+  const userDesc = userMessage?.trim() ? `。额外要求：${userMessage.trim()}` : '';
 
-  return `基于用户上传的庭院照片，保留庭院原始建筑和空间布局不变，在庭院空地上精心种植了${treeList}，${layoutDesc}。整体呈现${styleDesc}园林风格${userDesc}。阳光洒在树木上光影自然柔和，树木与庭院环境完美融合。专业园林景观设计效果图，高品质建筑摄影风格，超高清，写实风格。`;
+  return `在这张庭院照片的基础上，严格保持原有房屋建筑、围墙、地面、天空等所有原始元素完全不变，仅在庭院空地区域添加${treeList}，${layoutDesc}。树木必须真实自然地融入原有场景中，光影与原照片一致，透视比例正确。写实摄影风格，超高清画质${userDesc}`;
 }
 
 /**
@@ -57,7 +45,6 @@ function fileToBase64DataUri(filePath: string): string {
     absPath = path.join(process.cwd(), filePath);
   }
   const buf = fs.readFileSync(absPath);
-  // Detect mime type from extension
   const ext = path.extname(absPath).toLowerCase();
   const mimeMap: Record<string, string> = {
     '.jpg': 'image/jpeg',
@@ -71,11 +58,11 @@ function fileToBase64DataUri(filePath: string): string {
 }
 
 export interface GenerateImageOptions {
-  gardenPhotoPath: string;          // local file path of uploaded garden photo
-  treeImageUrls: string[];          // cover image URLs of selected trees (unused in new API)
-  treeInfos: TreeInfo[];            // tree metadata for prompt
-  styleType: string;                // garden style type key
-  userMessage: string;              // user's description
+  gardenPhotoPath: string;
+  treeImageUrls: string[];
+  treeInfos: TreeInfo[];
+  styleType: string;
+  userMessage: string;
 }
 
 export interface GenerateImageResult {
@@ -87,9 +74,9 @@ export interface GenerateImageResult {
  * Call Doubao Seedream 5.0 lite to generate a garden design image.
  *
  * Strategy:
- * - Garden photo is the PRIMARY reference (high weight to preserve original appearance)
- * - Style reference images are NOT used (only text prompt mentions style)
- * - Tree details are described in the text prompt
+ * - Use "remake" reference type to preserve the original photo as much as possible
+ * - reference_strength set to 0.95 (maximum preservation of original)
+ * - Prompt explicitly instructs: keep everything, ONLY add trees
  */
 export async function generateGardenImage(
   options: GenerateImageOptions,
@@ -99,9 +86,9 @@ export async function generateGardenImage(
     throw new Error('DOUBAO_API_KEY not configured');
   }
 
-  const prompt = buildPrompt(options.styleType, options.treeInfos, options.userMessage);
+  const prompt = buildPrompt(options.treeInfos, options.userMessage);
 
-  // Read garden photo as base64 data URI for image reference
+  // Read garden photo as base64 data URI
   let gardenPhotoDataUri: string;
   try {
     gardenPhotoDataUri = fileToBase64DataUri(options.gardenPhotoPath);
@@ -116,18 +103,20 @@ export async function generateGardenImage(
     response_format: 'url',
     size: '2K',
     watermark: false,
-    // Use garden photo as reference image to preserve original garden appearance
+    // "remake" type: regenerate based on original image, preserving its content
+    // High strength (0.95) = maximum preservation of original photo
     image_reference: [
       {
         image_data: [{ image: gardenPhotoDataUri }],
-        reference_type: 'use_as_reference',
-        reference_strength: 0.85,
+        reference_type: 'remake',
+        reference_strength: 0.95,
       },
     ],
   };
 
   console.log(`[Doubao Seedream] Model: ${DOUBAO_MODEL}`);
-  console.log(`[Doubao Seedream] Prompt: ${prompt.slice(0, 120)}...`);
+  console.log(`[Doubao Seedream] Prompt: ${prompt.slice(0, 150)}...`);
+  console.log(`[Doubao Seedream] Reference type: remake, strength: 0.95`);
 
   const res = await fetch(DOUBAO_API_URL, {
     method: 'POST',
@@ -136,7 +125,7 @@ export async function generateGardenImage(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(120000), // 120s timeout for image generation
+    signal: AbortSignal.timeout(120000),
   });
 
   if (!res.ok) {
