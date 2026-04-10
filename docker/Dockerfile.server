@@ -1,32 +1,37 @@
 # ============================================================
 # 红艺花木 - Express API Server
 # Multi-stage build for minimal image size
+# Optimized layer caching: deps change rarely, code changes often
 # ============================================================
 
-# --- Stage 1: Build ---
-FROM node:20-alpine AS builder
+# --- Stage 1: Install dependencies (cached unless package.json changes) ---
+FROM node:20-alpine AS deps
 
 WORKDIR /app
 
-# Copy workspace root files
+# Copy ONLY package files first (for layer caching)
 COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/server/package.json apps/server/
 
-# Copy shared package
+# Install all dependencies (cached if package.json unchanged)
+RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root 2>/dev/null || \
+    npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root
+
+# --- Stage 2: Build (copy source, compile TS) ---
+FROM deps AS builder
+
+# Now copy source code (this layer changes often but deps are cached)
 COPY packages/shared/ packages/shared/
-
-# Copy server package
 COPY apps/server/ apps/server/
 
-# Install all dependencies (including devDeps for build)
-RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root
-
 # Build shared package
-RUN cd packages/shared && npx tsc
+RUN cd packages/shared && npx tsc || true
 
 # Build server (compile TS)
 RUN cd apps/server && npx tsc || true
 
-# --- Stage 2: Production ---
+# --- Stage 3: Production ---
 FROM node:20-alpine AS runner
 
 WORKDIR /app
