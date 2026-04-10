@@ -21,7 +21,7 @@ import {
   ImageIcon,
   RefreshCw,
 } from 'lucide-react';
-import { getGardenStyles, getTreeList, generateAIPlan, type AIPlanResult } from '@/lib/api';
+import { getGardenStyles, getTreeList, generateAIPlan, type AIPlanResult, type AIDesignAdvice } from '@/lib/api';
 import { formatPrice } from '@hongyi/shared';
 import type { ITree, IGardenStyleConfig } from '@hongyi/shared';
 
@@ -584,8 +584,101 @@ export default function AIPlanPage() {
                 </div>
               )}
 
-              {/* Analysis Results */}
-              {result.analysis && (
+              {/* AI Analysis Results (Seed-2.0-pro) — preferred */}
+              {result.aiAnalysis && (
+                <>
+                  {/* Design Summary */}
+                  <div className="rounded-xl bg-gradient-to-r from-brand-navy to-blue-700 p-5 text-white">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-amber-300" />
+                      <h3 className="font-bold">AI智能设计方案</h3>
+                      <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] text-amber-200">AI深度分析</span>
+                    </div>
+                    <p className="text-sm leading-relaxed text-blue-100">
+                      {result.aiAnalysis.designSummary}
+                    </p>
+                  </div>
+
+                  {/* Space Analysis */}
+                  {result.aiAnalysis.spaceAnalysis && (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Camera className="h-4 w-4 text-blue-600" />
+                        <h4 className="font-semibold text-blue-800">庭院空间分析</h4>
+                      </div>
+                      <p className="text-sm leading-relaxed text-blue-700">
+                        {result.aiAnalysis.spaceAnalysis}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Tree Placement */}
+                  {result.aiAnalysis.treePlacement?.length > 0 && (
+                    <div>
+                      <div className="mb-3 flex items-center gap-2">
+                        <TreePine className="h-4 w-4 text-green-600" />
+                        <h4 className="font-semibold text-gray-800">树木布局方案</h4>
+                      </div>
+                      <div className="space-y-3">
+                        {result.aiAnalysis.treePlacement.map((item, i) => (
+                          <div key={i} className="rounded-xl border bg-white p-4">
+                            <div className="mb-1 flex items-center gap-2">
+                              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-xs font-bold text-green-700">
+                                {i + 1}
+                              </span>
+                              <span className="text-sm font-semibold text-gray-800">{item.treeName}</span>
+                            </div>
+                            <p className="ml-8 text-sm text-brand-navy">{item.position}</p>
+                            <p className="ml-8 mt-1 text-xs text-gray-500">{item.reason}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Style Advice */}
+                  {result.aiAnalysis.styleAdvice && (
+                    <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Palette className="h-4 w-4 text-purple-600" />
+                        <h4 className="font-semibold text-purple-800">风格设计建议</h4>
+                      </div>
+                      <p className="text-sm leading-relaxed text-purple-700">
+                        {result.aiAnalysis.styleAdvice}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Feng Shui */}
+                  {result.aiAnalysis.fengshuiTip && (
+                    <div className="rounded-xl bg-amber-50 p-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Wind className="h-4 w-4 text-amber-600" />
+                        <h4 className="font-semibold text-amber-800">风水建议</h4>
+                      </div>
+                      <p className="text-sm leading-relaxed text-amber-700">
+                        {result.aiAnalysis.fengshuiTip}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Budget */}
+                  {result.aiAnalysis.budgetEstimate && (
+                    <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-lg">💰</span>
+                        <h4 className="font-semibold text-green-800">预算估算</h4>
+                      </div>
+                      <p className="text-sm leading-relaxed text-green-700">
+                        {result.aiAnalysis.budgetEstimate}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Fallback: Rule-based Analysis (when AI analysis unavailable) */}
+              {!result.aiAnalysis && result.analysis && (
                 <>
                   {/* Design Summary */}
                   <div className="rounded-xl bg-gradient-to-r from-brand-navy to-blue-700 p-5 text-white">

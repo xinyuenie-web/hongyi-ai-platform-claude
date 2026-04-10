@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
 import { generateGardenImage } from '../services/doubao-ai.service.js';
+import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
@@ -154,12 +155,12 @@ export async function generatePlanHandler(req: Request, res: Response) {
     Inquiry.create({
       name: name.trim(),
       phone,
-      message: message || `AI方案生成 - ${style.name} - ${selectedTrees.map((t: any) => t.name).join('、')}`,
+      message: message || `AI方案生成 - ${(style as any).name} - ${selectedTrees.map((t: any) => t.name).join('、')}`,
       photos: [gardenPhotoUrl],
       source: 'website_form',
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
 
-    // --- Run image generation + rule analysis in parallel ---
+    // --- Prepare data for AI models ---
     const treeImageUrls = selectedTrees
       .map((t: any) => t.coverImage)
       .filter(Boolean);
@@ -171,16 +172,37 @@ export async function generatePlanHandler(req: Request, res: Response) {
       crown: t.specs?.crown || 150,
     }));
 
-    const analysisMessage = message || `${style.name}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
+    const analysisMessage = message || `${(style as any).name}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
 
-    const [imageResult, analysisResult] = await Promise.allSettled([
+    // Prepare garden photo base64 for vision model
+    let gardenPhotoBase64: string;
+    try {
+      gardenPhotoBase64 = gardenPhotoToBase64(gardenPhoto.path);
+    } catch (err) {
+      console.error('Failed to read garden photo for vision:', err);
+      gardenPhotoBase64 = '';
+    }
+
+    // --- Run 3-way parallel: Seedream + Seed-2.0-pro + rule analysis ---
+    const [imageResult, visionResult, ruleResult] = await Promise.allSettled([
+      // 1. Seedream 5.0 lite — generate effect image
       generateGardenImage({
         gardenPhotoPath: gardenPhoto.path,
         treeImageUrls,
         treeInfos,
-        styleType: style.type,
+        styleType: (style as any).type,
         userMessage: message || '',
       }),
+      // 2. Seed-2.0-pro — AI multimodal analysis (may fail, graceful degradation)
+      gardenPhotoBase64
+        ? analyzeGardenWithAI({
+            gardenPhotoBase64,
+            treeInfos,
+            styleName: (style as any).name,
+            userMessage: message || '',
+          })
+        : Promise.reject(new Error('Garden photo not available for vision')),
+      // 3. Rule-based analysis — always available as fallback
       analyzeGarden(analysisMessage, [gardenPhotoUrl]),
     ]);
 
@@ -190,24 +212,37 @@ export async function generatePlanHandler(req: Request, res: Response) {
     const response: any = {
       generatedImage: null,
       analysis: null,
+      aiAnalysis: null,
       prompt: null,
     };
 
+    // Image generation result
     if (imageResult.status === 'fulfilled') {
       response.generatedImage = imageResult.value.imageUrl;
       response.prompt = imageResult.value.prompt;
+      console.log('[GeneratePlan] Seedream image generated successfully');
     } else {
-      console.error('[GeneratePlan] Image generation failed:', imageResult.reason);
+      console.error('[GeneratePlan] Seedream image failed:', imageResult.reason?.message || imageResult.reason);
     }
 
-    if (analysisResult.status === 'fulfilled') {
-      response.analysis = analysisResult.value;
+    // AI vision analysis (Seed-2.0-pro) — preferred over rule-based
+    if (visionResult.status === 'fulfilled') {
+      response.aiAnalysis = visionResult.value;
+      console.log('[GeneratePlan] Seed-2.0-pro AI analysis succeeded');
     } else {
-      console.error('[GeneratePlan] Analysis failed:', analysisResult.reason);
+      console.error('[GeneratePlan] Seed-2.0-pro analysis failed:', visionResult.reason?.message || visionResult.reason);
     }
 
-    // At least one should succeed
-    if (!response.generatedImage && !response.analysis) {
+    // Rule-based analysis — fallback if AI analysis fails
+    if (ruleResult.status === 'fulfilled') {
+      response.analysis = ruleResult.value;
+      console.log('[GeneratePlan] Rule-based analysis succeeded');
+    } else {
+      console.error('[GeneratePlan] Rule-based analysis failed:', ruleResult.reason?.message || ruleResult.reason);
+    }
+
+    // At least one analysis should succeed, or image should be generated
+    if (!response.generatedImage && !response.aiAnalysis && !response.analysis) {
       return res.status(500).json({
         success: false,
         error: { code: 'AI_ERROR', message: 'AI服务暂时不可用，请稍后重试' },

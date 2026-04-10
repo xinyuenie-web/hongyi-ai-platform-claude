@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 const DOUBAO_API_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-const DOUBAO_MODEL = 'doubao-seedream-4-5-251128';
+const DOUBAO_MODEL = process.env.DOUBAO_SEEDREAM_MODEL || 'doubao-seedream-5-0-lite-260128';
 
 const STYLE_DESCRIPTIONS: Record<string, string> = {
   modern: '现代简约',
@@ -12,14 +12,6 @@ const STYLE_DESCRIPTIONS: Record<string, string> = {
   tuscan: '田园托斯卡纳',
 };
 
-const STYLE_ATMOSPHERE: Record<string, string> = {
-  modern: '简洁大气、线条利落',
-  chinese: '古韵悠然、诗情画意',
-  european: '典雅华贵、浪漫庄重',
-  japanese: '静谧禅意、空灵自然',
-  tuscan: '自然野趣、温馨浪漫',
-};
-
 interface TreeInfo {
   name: string;
   species: string;
@@ -27,9 +19,13 @@ interface TreeInfo {
   crown: number;
 }
 
+/**
+ * Build a detailed prompt for Seedream image generation.
+ * The prompt focuses on the user's garden with their selected trees —
+ * style only influences wording, NOT visual references.
+ */
 function buildPrompt(styleType: string, trees: TreeInfo[], userMessage: string): string {
   const styleDesc = STYLE_DESCRIPTIONS[styleType] || '中式';
-  const atmosphere = STYLE_ATMOSPHERE[styleType] || '优雅大气';
 
   const treeList = trees
     .map((t) => `一棵高${(t.height / 100).toFixed(1)}米冠幅${(t.crown / 100).toFixed(1)}米的${t.species}造型树`)
@@ -46,41 +42,37 @@ function buildPrompt(styleType: string, trees: TreeInfo[], userMessage: string):
     layoutDesc = '多棵造型树木群植于庭院各处，营造丰富的立体景观层次';
   }
 
-  return `一栋${styleDesc}风格别墅的庭院园林景观设计效果图。门前空地上精心种植了${treeList}，${layoutDesc}。庭院整体呈现${atmosphere}的氛围，阳光洒在树木上光影自然柔和。专业园林景观设计渲染图，高品质建筑摄影风格，8K超高清，写实风格。`;
+  // 用户自定义描述优先
+  const userDesc = userMessage?.trim() ? `，${userMessage.trim()}` : '';
+
+  return `基于用户上传的庭院照片，保留庭院原始建筑和空间布局不变，在庭院空地上精心种植了${treeList}，${layoutDesc}。整体呈现${styleDesc}园林风格${userDesc}。阳光洒在树木上光影自然柔和，树木与庭院环境完美融合。专业园林景观设计效果图，高品质建筑摄影风格，超高清，写实风格。`;
 }
 
 /**
- * Read a local file (uploaded image) and convert to base64.
- * Handles both absolute paths and relative paths from uploads dir.
+ * Read a local file and convert to base64 data URI.
  */
-function fileToBase64(filePath: string): string {
+function fileToBase64DataUri(filePath: string): string {
   let absPath = filePath;
   if (!path.isAbsolute(filePath)) {
     absPath = path.join(process.cwd(), filePath);
   }
   const buf = fs.readFileSync(absPath);
-  return buf.toString('base64');
-}
-
-/**
- * Download an image from URL and return base64 string.
- * Used for tree cover images that may be URLs.
- */
-async function urlToBase64(url: string): Promise<string> {
-  // If it's a local path (starts with /uploads or /images), read from disk
-  if (url.startsWith('/uploads') || url.startsWith('/images')) {
-    return fileToBase64(path.join(process.cwd(), url));
-  }
-
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
-  const arrayBuf = await res.arrayBuffer();
-  return Buffer.from(arrayBuf).toString('base64');
+  // Detect mime type from extension
+  const ext = path.extname(absPath).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+  };
+  const mime = mimeMap[ext] || 'image/jpeg';
+  return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
 export interface GenerateImageOptions {
   gardenPhotoPath: string;          // local file path of uploaded garden photo
-  treeImageUrls: string[];          // cover image URLs of selected trees
+  treeImageUrls: string[];          // cover image URLs of selected trees (unused in new API)
   treeInfos: TreeInfo[];            // tree metadata for prompt
   styleType: string;                // garden style type key
   userMessage: string;              // user's description
@@ -92,7 +84,12 @@ export interface GenerateImageResult {
 }
 
 /**
- * Call Doubao Seedream 4.5 to generate a garden design image.
+ * Call Doubao Seedream 5.0 lite to generate a garden design image.
+ *
+ * Strategy:
+ * - Garden photo is the PRIMARY reference (high weight to preserve original appearance)
+ * - Style reference images are NOT used (only text prompt mentions style)
+ * - Tree details are described in the text prompt
  */
 export async function generateGardenImage(
   options: GenerateImageOptions,
@@ -104,55 +101,33 @@ export async function generateGardenImage(
 
   const prompt = buildPrompt(options.styleType, options.treeInfos, options.userMessage);
 
-  // Build image references
-  const imageReferences: any[] = [];
-
-  // Garden photo as primary reference (high strength to preserve architecture)
+  // Read garden photo as base64 data URI for image reference
+  let gardenPhotoDataUri: string;
   try {
-    const gardenBase64 = fileToBase64(options.gardenPhotoPath);
-    imageReferences.push({
-      image_data: [{ image: gardenBase64 }],
-      reference_type: 'use_as_reference',
-      reference_strength: 0.8,
-    });
+    gardenPhotoDataUri = fileToBase64DataUri(options.gardenPhotoPath);
   } catch (err) {
     console.error('Failed to read garden photo:', err);
     throw new Error('无法读取庭院照片');
   }
 
-  // Tree images as secondary references (lower strength for style reference)
-  const treeBase64List: string[] = [];
-  for (const url of options.treeImageUrls.slice(0, 5)) {
-    try {
-      const b64 = await urlToBase64(url);
-      treeBase64List.push(b64);
-    } catch (err) {
-      console.warn(`Failed to load tree image ${url}:`, err);
-    }
-  }
-
-  if (treeBase64List.length > 0) {
-    imageReferences.push({
-      image_data: treeBase64List.map((b64) => ({ image: b64 })),
-      reference_type: 'use_as_reference',
-      reference_strength: 0.5,
-    });
-  }
-
-  const requestBody: any = {
+  const requestBody: Record<string, any> = {
     model: DOUBAO_MODEL,
     prompt,
     response_format: 'url',
-    size: '1024x1024',
-    seed: -1,
-    guidance_scale: 3.5,
+    size: '2K',
+    watermark: false,
+    // Use garden photo as reference image to preserve original garden appearance
+    image_reference: [
+      {
+        image_data: [{ image: gardenPhotoDataUri }],
+        reference_type: 'use_as_reference',
+        reference_strength: 0.85,
+      },
+    ],
   };
 
-  if (imageReferences.length > 0) {
-    requestBody.image_reference = imageReferences;
-  }
-
-  console.log(`[Doubao] Calling API with prompt: ${prompt.slice(0, 100)}...`);
+  console.log(`[Doubao Seedream] Model: ${DOUBAO_MODEL}`);
+  console.log(`[Doubao Seedream] Prompt: ${prompt.slice(0, 120)}...`);
 
   const res = await fetch(DOUBAO_API_URL, {
     method: 'POST',
@@ -161,24 +136,24 @@ export async function generateGardenImage(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(90000), // 90s timeout for image generation
+    signal: AbortSignal.timeout(120000), // 120s timeout for image generation
   });
 
   if (!res.ok) {
     const errorBody = await res.text().catch(() => 'unknown');
-    console.error(`[Doubao] API error ${res.status}:`, errorBody);
-    throw new Error(`豆包API错误: ${res.status}`);
+    console.error(`[Doubao Seedream] API error ${res.status}:`, errorBody);
+    throw new Error(`豆包Seedream API错误: ${res.status}`);
   }
 
   const data: any = await res.json();
 
   if (!data.data || !data.data[0] || !data.data[0].url) {
-    console.error('[Doubao] Unexpected response:', JSON.stringify(data).slice(0, 500));
-    throw new Error('豆包API返回格式异常');
+    console.error('[Doubao Seedream] Unexpected response:', JSON.stringify(data).slice(0, 500));
+    throw new Error('豆包Seedream API返回格式异常');
   }
 
   const imageUrl: string = data.data[0].url;
-  console.log(`[Doubao] Image generated successfully: ${imageUrl.slice(0, 80)}...`);
+  console.log(`[Doubao Seedream] Image generated successfully: ${imageUrl.slice(0, 80)}...`);
 
   return { imageUrl, prompt };
 }

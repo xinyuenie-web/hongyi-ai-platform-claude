@@ -183,10 +183,25 @@ export interface SeasonCare {
   pestControl: string;
 }
 
+/** AI vision analysis result from Seed-2.0-pro */
+export interface AIDesignAdvice {
+  designSummary: string;
+  spaceAnalysis: string;
+  treePlacement: Array<{
+    treeName: string;
+    position: string;
+    reason: string;
+  }>;
+  styleAdvice: string;
+  fengshuiTip: string;
+  budgetEstimate: string;
+}
+
 /** AI plan generation result */
 export interface AIPlanResult {
   generatedImage: string | null;
   analysis: AIAnalysisResult | null;
+  aiAnalysis: AIDesignAdvice | null;
   prompt: string | null;
 }
 
