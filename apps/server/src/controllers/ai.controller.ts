@@ -7,6 +7,95 @@ import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
 
 /**
+ * GET /api/v1/ai/diagnostics
+ * Check all AI service dependencies and report their status.
+ * No auth required — useful for quick troubleshooting.
+ */
+export async function diagnosticsHandler(_req: Request, res: Response) {
+  const results: Record<string, any> = {
+    timestamp: new Date().toISOString(),
+    env: {
+      FAL_KEY: process.env.FAL_KEY ? `${process.env.FAL_KEY.slice(0, 8)}...` : 'NOT SET',
+      FAL_PROXY_URL: process.env.FAL_PROXY_URL || 'NOT SET',
+      DOUBAO_VISION_API_KEY: process.env.DOUBAO_VISION_API_KEY || process.env.DOUBAO_API_KEY ? 'SET' : 'NOT SET',
+      DOUBAO_VISION_MODEL: process.env.DOUBAO_VISION_MODEL || 'doubao-seed-2-0-pro-260215 (default)',
+    },
+    checks: {} as Record<string, any>,
+  };
+
+  // Check 1: HK Proxy health
+  const proxyUrl = process.env.FAL_PROXY_URL;
+  if (proxyUrl) {
+    try {
+      const r = await fetch(`${proxyUrl}/health`, { signal: AbortSignal.timeout(8000) });
+      const body = await r.text();
+      results.checks.hkProxy = { status: 'OK', response: body, url: proxyUrl };
+    } catch (err: any) {
+      results.checks.hkProxy = { status: 'FAIL', error: err.message, url: proxyUrl,
+        hint: '香港代理不可达。请检查: 1) HK服务器nginx是否运行 2) 腾讯云安全组是否开放8462端口 3) 防火墙设置' };
+    }
+  } else {
+    results.checks.hkProxy = { status: 'SKIP', hint: 'FAL_PROXY_URL not configured' };
+  }
+
+  // Check 2: fal.ai API auth (lightweight — just test auth, expect 422 for invalid input)
+  if (process.env.FAL_KEY) {
+    const syncBase = proxyUrl ? `${proxyUrl}/fal-sync` : 'https://fal.run';
+    const testUrl = `${syncBase}/fal-ai/flux-pro/v1/fill`;
+    try {
+      const r = await fetch(testUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${process.env.FAL_KEY}` },
+        body: JSON.stringify({ prompt: 'test' }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = await r.text().catch(() => '');
+      // 422 = auth OK but invalid input (expected!), 401/403 = auth problem
+      if (r.status === 422) {
+        results.checks.falApi = { status: 'OK', detail: 'Auth valid, API reachable (422 = expected for test)' };
+      } else if (r.status === 401 || r.status === 403) {
+        results.checks.falApi = { status: 'AUTH_FAIL', httpStatus: r.status, body: body.slice(0, 200) };
+      } else {
+        results.checks.falApi = { status: 'UNEXPECTED', httpStatus: r.status, body: body.slice(0, 200) };
+      }
+    } catch (err: any) {
+      results.checks.falApi = { status: 'FAIL', error: err.message, url: testUrl,
+        hint: proxyUrl ? '通过代理访问fal.ai失败。可能是代理配置问题' : '直接访问fal.ai失败(中国需要代理)' };
+    }
+  } else {
+    results.checks.falApi = { status: 'SKIP', hint: 'FAL_KEY not configured' };
+  }
+
+  // Check 3: Doubao Vision API
+  const doubaoKey = process.env.DOUBAO_VISION_API_KEY || process.env.DOUBAO_API_KEY;
+  if (doubaoKey) {
+    try {
+      const r = await fetch('https://ark.cn-beijing.volces.com/api/v3/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${doubaoKey}` },
+        body: JSON.stringify({ model: process.env.DOUBAO_VISION_MODEL || 'doubao-seed-2-0-pro-260215', messages: [{ role: 'user', content: 'ping' }], max_tokens: 5 }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (r.ok) {
+        results.checks.doubaoVision = { status: 'OK' };
+      } else {
+        const body = await r.text().catch(() => '');
+        results.checks.doubaoVision = { status: 'FAIL', httpStatus: r.status, body: body.slice(0, 200) };
+      }
+    } catch (err: any) {
+      results.checks.doubaoVision = { status: 'FAIL', error: err.message };
+    }
+  } else {
+    results.checks.doubaoVision = { status: 'SKIP', hint: 'DOUBAO_VISION_API_KEY not configured' };
+  }
+
+  const allOk = Object.values(results.checks).every((c: any) => c.status === 'OK' || c.status === 'SKIP');
+  results.overall = allOk ? 'ALL_OK' : 'ISSUES_FOUND';
+
+  return res.json(results);
+}
+
+/**
  * POST /api/v1/ai/analyze-garden
  * Body: { message: string, photos?: string[] }
  * or multipart with photos field

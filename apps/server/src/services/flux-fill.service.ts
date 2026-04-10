@@ -86,6 +86,8 @@ export interface FluxFillResult {
  * Uses fal.ai synchronous endpoint: POST https://fal.run/...
  * This blocks until the result is ready (~30-60s), avoiding polling issues.
  * Through proxy: POST http://proxy:8462/fal-sync/...
+ *
+ * If sync API fails, falls back to QUEUE API (submit + poll).
  */
 async function callFluxFillAPI(
   prompt: string,
@@ -94,50 +96,132 @@ async function callFluxFillAPI(
 ): Promise<string> {
   const falKey = process.env.FAL_KEY!;
   const proxyUrl = process.env.FAL_PROXY_URL; // e.g., http://43.129.236.142:8462
+  const modelId = 'fal-ai/flux-pro/v1/fill';
 
-  // Synchronous endpoint: fal.run (NOT queue.fal.run)
+  const payload = JSON.stringify({
+    prompt,
+    image_url: imageBase64,
+    mask_url: maskBase64,
+    num_images: 1,
+    output_format: 'jpeg',
+  });
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Key ${falKey}`,
+  };
+
+  // Strategy 1: Synchronous API (preferred — simpler, no polling)
   const syncBase = proxyUrl
     ? `${proxyUrl}/fal-sync`   // proxy: /fal-sync/ -> https://fal.run/
     : 'https://fal.run';
+  const syncUrl = `${syncBase}/${modelId}`;
 
-  const modelId = 'fal-ai/flux-pro/v1/fill';
-  const url = `${syncBase}/${modelId}`;
+  console.log(`[Flux Fill] Strategy 1: Sync API via ${syncUrl.slice(0, 80)}...`);
+  try {
+    const res = await fetch(syncUrl, {
+      method: 'POST',
+      headers,
+      body: payload,
+      signal: AbortSignal.timeout(300000), // 5 min timeout
+    });
 
-  console.log(`[Flux Fill] Calling synchronous API: ${url.slice(0, 80)}...`);
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Key ${falKey}`,
-    },
-    body: JSON.stringify({
-      prompt,
-      image_url: imageBase64,
-      mask_url: maskBase64,
-      num_images: 1,
-      output_format: 'jpeg',
-    }),
-    signal: AbortSignal.timeout(300000), // 5 min timeout for sync
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => 'unknown');
-    console.error(`[Flux Fill] API error ${res.status}:`, errBody.slice(0, 500));
-    throw new Error(`Flux Fill API failed: ${res.status}`);
+    if (res.ok) {
+      const data: any = await res.json();
+      console.log(`[Flux Fill] Sync API response keys:`, Object.keys(data));
+      const imageUrl = data.images?.[0]?.url;
+      if (imageUrl) {
+        console.log(`[Flux Fill] Image generated via sync: ${imageUrl.slice(0, 80)}...`);
+        return imageUrl;
+      }
+      console.error('[Flux Fill] Sync API: no image in response:', JSON.stringify(data).slice(0, 300));
+    } else {
+      const errBody = await res.text().catch(() => 'unknown');
+      console.error(`[Flux Fill] Sync API error ${res.status}:`, errBody.slice(0, 500));
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`Flux Fill认证失败(${res.status}): 请检查FAL_KEY是否有效、余额是否充足`);
+      }
+    }
+  } catch (err: any) {
+    if (err.message.includes('认证失败')) throw err;
+    console.warn(`[Flux Fill] Sync API failed: ${err.message}`);
   }
 
-  const data: any = await res.json();
-  console.log(`[Flux Fill] Response keys:`, Object.keys(data));
+  // Strategy 2: Queue API (submit + poll)
+  const queueBase = proxyUrl
+    ? `${proxyUrl}/fal`   // proxy: /fal/ -> https://queue.fal.run/
+    : 'https://queue.fal.run';
+  const submitUrl = `${queueBase}/${modelId}`;
 
-  const imageUrl = data.images?.[0]?.url;
-  if (!imageUrl) {
-    console.error('[Flux Fill] No image in response:', JSON.stringify(data).slice(0, 500));
-    throw new Error('Flux Fill returned no image');
+  console.log(`[Flux Fill] Strategy 2: Queue API via ${submitUrl.slice(0, 80)}...`);
+  try {
+    // Submit job
+    const submitRes = await fetch(submitUrl, {
+      method: 'POST',
+      headers,
+      body: payload,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!submitRes.ok) {
+      const errBody = await submitRes.text().catch(() => 'unknown');
+      throw new Error(`Queue submit failed (${submitRes.status}): ${errBody.slice(0, 200)}`);
+    }
+
+    const submitData: any = await submitRes.json();
+    const requestId = submitData.request_id;
+    if (!requestId) {
+      throw new Error('Queue API returned no request_id');
+    }
+    console.log(`[Flux Fill] Job submitted: ${requestId}`);
+
+    // Poll for result (up to 5 min, every 5s)
+    const statusBase = proxyUrl
+      ? `${proxyUrl}/fal`
+      : 'https://queue.fal.run';
+    const maxAttempts = 60;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      const statusUrl = `${statusBase}/${modelId}/requests/${requestId}/status`;
+      try {
+        const statusRes = await fetch(statusUrl, {
+          headers: { 'Authorization': `Key ${falKey}` },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!statusRes.ok) continue;
+
+        const statusData: any = await statusRes.json();
+        console.log(`[Flux Fill] Poll ${i + 1}: status=${statusData.status}`);
+
+        if (statusData.status === 'COMPLETED') {
+          // Fetch result
+          const resultUrl = `${statusBase}/${modelId}/requests/${requestId}`;
+          const resultRes = await fetch(resultUrl, {
+            headers: { 'Authorization': `Key ${falKey}` },
+            signal: AbortSignal.timeout(15000),
+          });
+          if (resultRes.ok) {
+            const resultData: any = await resultRes.json();
+            const imageUrl = resultData.images?.[0]?.url;
+            if (imageUrl) {
+              console.log(`[Flux Fill] Image generated via queue: ${imageUrl.slice(0, 80)}...`);
+              return imageUrl;
+            }
+          }
+        } else if (statusData.status === 'FAILED') {
+          throw new Error(`Flux Fill job failed: ${JSON.stringify(statusData).slice(0, 200)}`);
+        }
+      } catch (pollErr: any) {
+        if (pollErr.message.includes('job failed')) throw pollErr;
+        console.warn(`[Flux Fill] Poll error: ${pollErr.message}`);
+      }
+    }
+    throw new Error('Flux Fill queue timeout: job did not complete in 5 minutes');
+  } catch (err: any) {
+    console.error(`[Flux Fill] Queue API also failed: ${err.message}`);
+    throw new Error(`Flux Fill全部策略失败。同步API和队列API均不可用。请检查: 1) 香港代理是否运行 2) fal.ai余额 3) 网络连通性。错误: ${err.message}`);
   }
-
-  console.log(`[Flux Fill] Image generated: ${imageUrl.slice(0, 80)}...`);
-  return imageUrl;
 }
 
 /**

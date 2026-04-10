@@ -1,9 +1,12 @@
 import { Router } from 'express';
-import { analyzeGardenHandler, generatePlanHandler } from '../controllers/ai.controller.js';
+import { analyzeGardenHandler, generatePlanHandler, diagnosticsHandler } from '../controllers/ai.controller.js';
 import { uploadPhotos } from '../middleware/upload.js';
 import { generateCarePlan, getAllCareGuides, getCareGuide } from '../services/care-ai.service.js';
 
 export const aiRouter = Router();
+
+// AI diagnostics — check all service dependencies
+aiRouter.get('/diagnostics', diagnosticsHandler);
 
 // AI garden analysis (supports optional photo upload)
 aiRouter.post('/analyze-garden', uploadPhotos, analyzeGardenHandler);
