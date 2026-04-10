@@ -506,8 +506,10 @@ export async function generatePlanHandler(req: Request, res: Response) {
         response.prompt = fluxResult.prompt;
         console.log('[GeneratePlan] Flux Fill image generated successfully!');
       } catch (fluxErr: any) {
-        console.error('[GeneratePlan] Flux Fill failed:', fluxErr.message || fluxErr);
-        // Flux Fill failed, but we still have analysis results
+        const errMsg = fluxErr.message || String(fluxErr);
+        console.error('[GeneratePlan] Flux Fill failed:', errMsg);
+        console.error('[GeneratePlan] Flux Fill stack:', fluxErr.stack?.slice(0, 500));
+        response.imageError = errMsg; // Include error detail for debugging
       }
     } else {
       console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');

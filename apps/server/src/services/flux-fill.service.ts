@@ -303,15 +303,35 @@ export async function fluxFillAddTrees(
   if (!path.isAbsolute(absPath)) {
     absPath = path.join(process.cwd(), absPath);
   }
-  const imageBuffer = fs.readFileSync(absPath);
-  const metadata = await sharp(imageBuffer).metadata();
-  const width = metadata.width!;
-  const height = metadata.height!;
+  const rawBuffer = fs.readFileSync(absPath);
+  const rawMeta = await sharp(rawBuffer).metadata();
+  const rawWidth = rawMeta.width!;
+  const rawHeight = rawMeta.height!;
+  console.log(`[Flux Fill] Original image: ${rawWidth}x${rawHeight} (${rawBuffer.length} bytes)`);
 
-  console.log(`[Flux Fill] Original image: ${width}x${height}`);
+  // Resize if too large — fal.ai works best with images ≤1536px, and base64 payload
+  // must stay reasonable (<10MB). Resize to max 1024px on longest side for reliability.
+  const MAX_DIM = 1024;
+  let imageBuffer: Buffer;
+  let width: number;
+  let height: number;
+
+  if (rawWidth > MAX_DIM || rawHeight > MAX_DIM) {
+    const resized = sharp(rawBuffer).resize(MAX_DIM, MAX_DIM, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 });
+    imageBuffer = await resized.toBuffer();
+    const newMeta = await sharp(imageBuffer).metadata();
+    width = newMeta.width!;
+    height = newMeta.height!;
+    console.log(`[Flux Fill] Resized to: ${width}x${height} (${imageBuffer.length} bytes, was ${rawBuffer.length})`);
+  } else {
+    imageBuffer = rawBuffer;
+    width = rawWidth;
+    height = rawHeight;
+  }
+
   console.log(`[Flux Fill] Tree placements: ${options.treePlacements.length}`);
 
-  // 2. Generate mask
+  // 2. Generate mask (must match resized dimensions)
   const maskBuffer = await generateMask(width, height, options.treePlacements);
   console.log(`[Flux Fill] Mask generated (${maskBuffer.length} bytes)`);
 
@@ -322,15 +342,11 @@ export async function fluxFillAddTrees(
   fs.writeFileSync(path.join(outputDir, maskFilename), maskBuffer);
   console.log(`[Flux Fill] Mask saved: ${maskFilename}`);
 
-  // 3. Convert to base64 data URIs
-  const ext = path.extname(absPath).toLowerCase();
-  const mimeMap: Record<string, string> = {
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.png': 'image/png', '.webp': 'image/webp',
-  };
-  const mime = mimeMap[ext] || 'image/jpeg';
-  const imageBase64 = `data:${mime};base64,${imageBuffer.toString('base64')}`;
+  // 3. Convert to base64 data URIs (always jpeg for smaller payload)
+  const imageBase64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
   const maskBase64 = `data:image/png;base64,${maskBuffer.toString('base64')}`;
+  const payloadSizeMB = ((imageBase64.length + maskBase64.length) / 1024 / 1024).toFixed(1);
+  console.log(`[Flux Fill] Base64 payload: ~${payloadSizeMB}MB (image: ${imageBase64.length}, mask: ${maskBase64.length})`);
 
   // 4. Build prompt
   const prompt = buildFluxPrompt(options.treePlacements, options.styleName, options.userMessage);
