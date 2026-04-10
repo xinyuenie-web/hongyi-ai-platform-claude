@@ -25,8 +25,14 @@ export function createApp(): express.Application {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Serve uploaded files in development
-  app.use('/uploads', express.static('uploads'));
+  // Serve uploaded files (uploads volume in Docker)
+  app.use('/uploads', express.static('uploads', {
+    setHeaders: (res) => {
+      // Allow cross-origin access for images
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    },
+  }));
 
   // API routes
   app.use('/api/v1/trees', treeRouter);

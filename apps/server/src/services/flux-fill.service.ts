@@ -143,33 +143,34 @@ async function callFluxFillAPI(
 /**
  * Download an image from fal.ai CDN (through proxy if needed).
  * fal.ai image URLs expire in ~10 minutes and are inaccessible from China.
+ *
+ * Uses HK proxy's /fal-download/ endpoint which accepts the full URL as query param,
+ * avoiding hostname mismatch issues (v3.fal.media vs v3b.fal.media etc.)
  */
 async function downloadFalImage(imageUrl: string): Promise<Buffer> {
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  // If we have a proxy, rewrite the URL to go through it
-  let downloadUrl = imageUrl;
-  if (proxyUrl && imageUrl.includes('fal.media')) {
-    // Replace https://v3.fal.media/... with proxy/fal-media/...
-    downloadUrl = imageUrl.replace(/https?:\/\/[^/]*fal\.media\//, `${proxyUrl}/fal-media/`);
+  // Strategy 1: Download through HK proxy (for China servers)
+  if (proxyUrl) {
+    const downloadUrl = `${proxyUrl}/fal-download/?url=${encodeURIComponent(imageUrl)}`;
+    console.log(`[Flux Fill] Downloading via proxy: ${downloadUrl.slice(0, 120)}...`);
+    try {
+      const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(60000) });
+      if (res.ok) {
+        return Buffer.from(await res.arrayBuffer());
+      }
+      console.warn(`[Flux Fill] Proxy download failed: ${res.status}, trying direct...`);
+    } catch (err: any) {
+      console.warn(`[Flux Fill] Proxy download error: ${err.message}, trying direct...`);
+    }
   }
 
-  console.log(`[Flux Fill] Downloading from: ${downloadUrl.slice(0, 100)}...`);
-  const res = await fetch(downloadUrl, {
-    signal: AbortSignal.timeout(60000),
-  });
-
+  // Strategy 2: Direct download (works outside China or as fallback)
+  console.log(`[Flux Fill] Downloading directly: ${imageUrl.slice(0, 100)}...`);
+  const res = await fetch(imageUrl, { signal: AbortSignal.timeout(60000) });
   if (!res.ok) {
-    // If proxy download fails, try direct
-    if (downloadUrl !== imageUrl) {
-      console.warn(`[Flux Fill] Proxy download failed, trying direct...`);
-      const directRes = await fetch(imageUrl, { signal: AbortSignal.timeout(60000) });
-      if (!directRes.ok) throw new Error(`Download failed: ${directRes.status}`);
-      return Buffer.from(await directRes.arrayBuffer());
-    }
     throw new Error(`Download failed: ${res.status}`);
   }
-
   return Buffer.from(await res.arrayBuffer());
 }
 
