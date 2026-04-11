@@ -182,30 +182,37 @@ function saveDebugImage(base64DataUri: string, name: string): void {
 async function callKontext(params: {
   imageBase64: string;
   maskBase64: string;
-  refBase64: string;
+  refBase64?: string;
   prompt: string;
-  treeIndex: number;
+  debugLabel: string;
+  strength?: number;
 }): Promise<string> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) throw new Error('FAL_KEY not set');
 
-  // Save debug images before API call
-  saveDebugImage(params.imageBase64, `tree${params.treeIndex}-input`);
-  saveDebugImage(params.maskBase64, `tree${params.treeIndex}-mask`);
-  saveDebugImage(params.refBase64, `tree${params.treeIndex}-reference`);
+  const strength = params.strength ?? 0.95;
 
-  const payload = {
+  // Save debug images before API call
+  saveDebugImage(params.imageBase64, `${params.debugLabel}-input`);
+  saveDebugImage(params.maskBase64, `${params.debugLabel}-mask`);
+  if (params.refBase64) {
+    saveDebugImage(params.refBase64, `${params.debugLabel}-reference`);
+  }
+
+  const payload: Record<string, any> = {
     image_url: params.imageBase64,
     mask_url: params.maskBase64,
-    reference_image_url: params.refBase64,
     prompt: params.prompt,
     num_images: 1,
     output_format: 'jpeg',
-    strength: 0.95,
-    guidance_scale: 5.5,    // Balanced: higher than default(2.5) for better reference matching, but not so high it kills generation
+    strength,
+    guidance_scale: 5.5,
     num_inference_steps: 28,
-    sync_mode: true,  // KEY: return image data in response, no CDN download
+    sync_mode: true,
   };
+  if (params.refBase64) {
+    payload.reference_image_url = params.refBase64;
+  }
 
   const headers = {
     'Content-Type': 'application/json',
@@ -263,7 +270,7 @@ async function callKontext(params: {
         }
 
         // Save output for debugging
-        saveDebugImage(imageUrl, `tree${params.treeIndex}-output`);
+        saveDebugImage(imageUrl, `${params.debugLabel}-output`);
         return imageUrl;
       }
 
@@ -274,7 +281,7 @@ async function callKontext(params: {
         if (dlRes.ok) {
           const buf = Buffer.from(await dlRes.arrayBuffer());
           const result = `data:image/jpeg;base64,${buf.toString('base64')}`;
-          saveDebugImage(result, `tree${params.treeIndex}-output`);
+          saveDebugImage(result, `${params.debugLabel}-output`);
           return result;
         }
       } catch { /* try proxy */ }
@@ -286,7 +293,7 @@ async function callKontext(params: {
         if (dlRes.ok) {
           const buf = Buffer.from(await dlRes.arrayBuffer());
           const result = `data:image/jpeg;base64,${buf.toString('base64')}`;
-          saveDebugImage(result, `tree${params.treeIndex}-output`);
+          saveDebugImage(result, `${params.debugLabel}-output`);
           return result;
         }
       }
@@ -329,6 +336,77 @@ function getTreeVisualDescription(treeName: string): string {
 }
 
 /**
+ * Generate mask for ground treatment (grass, stone, etc.).
+ * White = area to regenerate (ground), Black = preserve (trees, buildings).
+ * Excludes tree root areas to avoid overwriting planted trees.
+ */
+async function generateGroundMask(
+  w: number, h: number,
+  groundRegion: { yStart: number; yEnd: number },
+  treePlacements: Array<{ x: number; y: number; width: number; height: number }>,
+): Promise<string> {
+  const sharp = (await import('sharp')).default;
+
+  const yStart = Math.round(groundRegion.yStart * h);
+  const yEnd = Math.round(groundRegion.yEnd * h);
+  const groundH = yEnd - yStart;
+
+  // Create white rectangle for the ground region
+  const groundSvg = Buffer.from(
+    `<svg width="${w}" height="${groundH}"><rect width="${w}" height="${groundH}" fill="white"/></svg>`,
+  );
+
+  // Create black rectangles for each tree's base area (to preserve trees)
+  const treeExclusions = treePlacements.map((t) => {
+    // Protect the bottom portion of each tree (where trunk meets ground)
+    const treeLeft = Math.max(0, Math.round((t.x - t.width / 2) * w));
+    const treeRight = Math.min(w, Math.round((t.x + t.width / 2) * w));
+    const treeBottom = Math.round(t.y * h);
+    const protectTop = Math.max(yStart, treeBottom - Math.round(t.height * h));
+    const protectW = treeRight - treeLeft;
+    const protectH = treeBottom - protectTop;
+    if (protectW <= 0 || protectH <= 0) return null;
+    return {
+      input: Buffer.from(
+        `<svg width="${protectW}" height="${protectH}"><rect width="${protectW}" height="${protectH}" fill="black"/></svg>`,
+      ),
+      left: treeLeft,
+      top: protectTop - yStart, // relative to ground region
+    };
+  }).filter((e): e is NonNullable<typeof e> => e !== null && e.top >= 0 && e.top < groundH);
+
+  // Compose: white ground + black tree exclusions
+  const composites: Array<{ input: Buffer; left: number; top: number }> = [
+    { input: groundSvg, left: 0, top: yStart },
+  ];
+
+  // Start with black canvas, composite white ground region, then black tree areas
+  let mask = sharp({
+    create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
+  }).composite([{ input: groundSvg, left: 0, top: yStart }]);
+
+  if (treeExclusions.length > 0) {
+    const groundWithExclusions = await sharp(
+      await mask.png().toBuffer(),
+    ).composite(
+      treeExclusions.map((e) => ({
+        input: e.input,
+        left: e.left,
+        top: yStart + Math.max(0, e.top),
+      })),
+    ).png().toBuffer();
+
+    const result = `data:image/png;base64,${groundWithExclusions.toString('base64')}`;
+    console.log(`[Kontext] Ground mask: ${w}x${h}, region y=${yStart}-${yEnd}, ${treeExclusions.length} tree exclusions`);
+    return result;
+  }
+
+  const buf = await mask.png().toBuffer();
+  console.log(`[Kontext] Ground mask: ${w}x${h}, region y=${yStart}-${yEnd}, no tree exclusions`);
+  return `data:image/png;base64,${buf.toString('base64')}`;
+}
+
+/**
  * Add trees to garden photo using Flux Kontext.
  *
  * Sequential process (each tree builds on previous result):
@@ -343,6 +421,11 @@ function getTreeVisualDescription(treeName: string): string {
 export async function kontextAddTrees(options: {
   gardenPhotoPath: string;
   trees: KontextTreePlacement[];
+  groundTreatment?: {
+    prompt: string;
+    groundRegion: { yStart: number; yEnd: number };
+    treePlacements: Array<{ x: number; y: number; width: number; height: number }>;
+  };
 }): Promise<{ imageUrl: string }> {
   const sharp = (await import('sharp')).default;
   const trees = options.trees.slice(0, 3);
@@ -408,7 +491,7 @@ export async function kontextAddTrees(options: {
         maskBase64,
         refBase64,
         prompt,
-        treeIndex: i + 1,
+        debugLabel: `tree${i + 1}`,
       });
 
       // Update current image for next iteration
@@ -428,6 +511,36 @@ export async function kontextAddTrees(options: {
 
   if (succeeded === 0) {
     throw new Error('所有树木生成失败');
+  }
+
+  // Ground treatment step (grass, stone, etc.) — only if requested and at least 1 tree succeeded
+  if (options.groundTreatment && succeeded > 0) {
+    console.log(`[Kontext] Ground treatment: "${options.groundTreatment.prompt}"`);
+    try {
+      const groundMask = await generateGroundMask(
+        currentW, currentH,
+        options.groundTreatment.groundRegion,
+        options.groundTreatment.treePlacements,
+      );
+
+      const groundResult = await callKontext({
+        imageBase64: currentBase64,
+        maskBase64: groundMask,
+        prompt: options.groundTreatment.prompt + '. Photorealistic outdoor garden photography, natural lighting.',
+        debugLabel: 'ground',
+        strength: 0.85, // Lower strength to preserve more original texture for natural blending
+      });
+
+      currentBase64 = groundResult;
+      const resultBuf = Buffer.from(groundResult.split(',')[1], 'base64');
+      const meta = await sharp(resultBuf).metadata();
+      currentW = meta.width!;
+      currentH = meta.height!;
+      console.log(`[Kontext] Ground treatment done: ${currentW}x${currentH}`);
+    } catch (err: any) {
+      console.error(`[Kontext] Ground treatment failed (non-fatal): ${err.message}`);
+      // Don't throw — trees are already done, ground failure is non-fatal
+    }
   }
 
   // Save final image

@@ -43,9 +43,15 @@ const STEPS = [
 ];
 
 const QUICK_TAGS = [
+  // 庭院基本情况
   '约100平', '约200平', '约300平', '约500平',
-  '注重风水', '有小孩', '有老人', '养宠物',
-  '预算5万', '预算10万', '预算20万', '预算50万',
+  '坐北朝南', '有围墙', '有小孩', '有老人',
+  // 地面处理
+  '空地铺草皮', '铺青石板路', '铺鹅卵石小径',
+  // 布局偏好
+  '注重风水', '喜欢对称布局', '门前要留车位',
+  // 风格预算
+  '中式风格', '日式风格', '预算10万', '预算20万',
 ];
 
 export default function AIPlanPage() {
@@ -456,7 +462,7 @@ export default function AIPlanPage() {
                     <Sparkles className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-amber-500" />
                   </div>
                   <p className="text-sm font-medium text-gray-700">AI正在为您设计庭院效果图...</p>
-                  <p className="mt-1 text-xs text-gray-400">预计需要30-60秒，请耐心等待</p>
+                  <p className="mt-1 text-xs text-gray-400">预计需要1-2分钟，请耐心等待</p>
                 </div>
               ) : (
                 <button
@@ -527,6 +533,15 @@ export default function AIPlanPage() {
                         ))}
                     </div>
                   </div>
+                  {/* 需求描述 */}
+                  {form.message && (
+                    <div className="sm:col-span-2 border-t pt-3 mt-2">
+                      <p className="mb-1 text-xs font-medium text-gray-500">需求描述</p>
+                      <p className="text-sm text-gray-700 bg-white rounded-lg border p-2.5">
+                        {form.message}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 

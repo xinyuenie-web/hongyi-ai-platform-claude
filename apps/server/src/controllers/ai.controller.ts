@@ -707,9 +707,15 @@ export async function generatePlanHandler(req: Request, res: Response) {
         console.log(`[GeneratePlan] Kontext items:`, kontextItems.map(i => `${i.treeName} img:${i.treeImageUrl}`));
         console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
         try {
+          const groundTreatment = response.aiAnalysis?.groundTreatment;
           const kontextResult = await kontextAddTrees({
             gardenPhotoPath: gardenPhoto.path,
             trees: kontextItems,
+            groundTreatment: groundTreatment ? {
+              prompt: groundTreatment.prompt,
+              groundRegion: groundTreatment.groundRegion,
+              treePlacements: kontextItems.map(t => ({ x: t.x, y: t.y, width: t.width, height: t.height })),
+            } : undefined,
           });
           response.generatedImage = kontextResult.imageUrl;
           console.log('[GeneratePlan] Kontext inpaint succeeded!');
