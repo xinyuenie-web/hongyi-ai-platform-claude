@@ -23,6 +23,41 @@ aiRouter.get('/image/:filename', (req, res) => {
   });
 });
 
+// Serve debug images (mask, input, output, reference) for troubleshooting
+aiRouter.get('/debug/:filename', (req, res) => {
+  const { filename } = req.params;
+  if (!/^[\w.-]+$/.test(filename)) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const filePath = require('path').join(process.cwd(), 'uploads', 'ai-debug', filename);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.sendFile(filePath, (err: any) => {
+    if (err) res.status(404).json({ error: 'Debug image not found' });
+  });
+});
+
+// List all debug images
+aiRouter.get('/debug', (_req, res) => {
+  const debugDir = require('path').join(process.cwd(), 'uploads', 'ai-debug');
+  const fs = require('fs');
+  try {
+    if (!fs.existsSync(debugDir)) {
+      return res.json({ files: [], hint: 'No debug images yet. Generate a plan first.' });
+    }
+    const files = fs.readdirSync(debugDir)
+      .filter((f: string) => /\.(jpg|png)$/.test(f))
+      .map((f: string) => ({
+        name: f,
+        url: `/api/v1/ai/debug/${f}`,
+        size: fs.statSync(require('path').join(debugDir, f)).size,
+      }));
+    return res.json({ files });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Flux Fill end-to-end test (tiny image, ~$0.001 cost)
 aiRouter.get('/test-flux', testFluxHandler);
 

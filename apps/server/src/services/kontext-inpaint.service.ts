@@ -8,6 +8,8 @@
  * KEY: Uses sync_mode=true so the API returns image data directly in the
  * response (as data URI). This eliminates the need to download from
  * fal.media CDN, which is unreliable from China.
+ *
+ * DEBUG: Saves mask/input/output images to uploads/ai-debug/ for inspection.
  */
 
 import fs from 'fs';
@@ -34,7 +36,9 @@ async function imageToBase64(imagePath: string): Promise<string> {
     const localPath = path.join(process.cwd(), '..', 'website', 'public', imagePath);
     if (fs.existsSync(localPath)) {
       const buf = fs.readFileSync(localPath);
-      return `data:image/jpeg;base64,${buf.toString('base64')}`;
+      const ext = path.extname(localPath).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+      return `data:${mime};base64,${buf.toString('base64')}`;
     }
     // Docker: fetch from website or nginx
     for (const host of ['website:3000', 'nginx:80']) {
@@ -43,7 +47,9 @@ async function imageToBase64(imagePath: string): Promise<string> {
         if (res.ok) {
           const buf = Buffer.from(await res.arrayBuffer());
           console.log(`[Kontext] Loaded ${imagePath} from ${host} (${buf.length}b)`);
-          return `data:image/jpeg;base64,${buf.toString('base64')}`;
+          const ext = path.extname(imagePath).toLowerCase();
+          const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+          return `data:${mime};base64,${buf.toString('base64')}`;
         }
       } catch { /* try next */ }
     }
@@ -98,30 +104,34 @@ async function prepareGardenPhoto(filePath: string): Promise<{
 /**
  * Generate mask for a single tree placement.
  * White = area to regenerate, Black = preserve.
+ *
+ * Uses a large rectangular region with rounded corners.
+ * Previous elliptical mask was too small — larger mask gives the AI
+ * more room to generate the tree naturally.
  */
 async function generateMask(
   w: number, h: number, p: KontextTreePlacement,
 ): Promise<string> {
   const sharp = (await import('sharp')).default;
 
-  const treeW = Math.max(20, Math.round(p.width * w));
-  const treeH = Math.max(30, Math.round(p.height * h));
+  // Ensure minimum viable mask size (at least 10% of image dimension)
+  const minW = Math.max(60, Math.round(w * 0.10));
+  const minH = Math.max(80, Math.round(h * 0.15));
+  const treeW = Math.max(minW, Math.round(p.width * w));
+  const treeH = Math.max(minH, Math.round(p.height * h));
+
+  // p.x = center, p.y = bottom/ground level
   const left = Math.max(0, Math.min(w - treeW, Math.round(p.x * w - treeW / 2)));
   const top = Math.max(0, Math.min(h - treeH, Math.round(p.y * h - treeH)));
 
-  // Elliptical tree shape
-  const cx = Math.round(treeW / 2);
-  const cy = Math.round(treeH * 0.4);
-  const rx = Math.round(treeW / 2);
-  const ry = Math.round(treeH * 0.45);
-  const trunkW = Math.max(Math.round(treeW * 0.2), 4);
-  const trunkX = Math.round((treeW - trunkW) / 2);
-  const trunkTop = Math.round(treeH * 0.5);
+  // Use rounded rectangle (simpler, more reliable than ellipse)
+  // Add slight feathering at edges via rx/ry
+  const rx = Math.round(treeW * 0.15);
+  const ry = Math.round(treeH * 0.08);
 
   const svg = Buffer.from(
     `<svg width="${treeW}" height="${treeH}">` +
-    `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="white"/>` +
-    `<rect x="${trunkX}" y="${trunkTop}" width="${trunkW}" height="${treeH - trunkTop}" fill="white"/>` +
+    `<rect width="${treeW}" height="${treeH}" rx="${rx}" ry="${ry}" fill="white"/>` +
     `</svg>`,
   );
 
@@ -129,7 +139,27 @@ async function generateMask(
     create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
   }).composite([{ input: svg, left, top }]).png().toBuffer();
 
+  console.log(`[Kontext] Mask: image ${w}x${h}, tree region: left=${left} top=${top} ${treeW}x${treeH} (${(treeW*treeH/(w*h)*100).toFixed(1)}% of image)`);
+
   return `data:image/png;base64,${buf.toString('base64')}`;
+}
+
+/**
+ * Save a base64 data URI to disk for debugging.
+ */
+function saveDebugImage(base64DataUri: string, name: string): void {
+  try {
+    const debugDir = path.join(process.cwd(), 'uploads', 'ai-debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const data = base64DataUri.split(',')[1];
+    if (!data) return;
+    const ext = base64DataUri.includes('image/png') ? 'png' : 'jpg';
+    const filePath = path.join(debugDir, `${name}.${ext}`);
+    fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
+    console.log(`[Kontext] Debug saved: ${filePath} (${Buffer.from(data, 'base64').length}b)`);
+  } catch (err) {
+    console.warn(`[Kontext] Debug save failed for ${name}:`, err);
+  }
 }
 
 /**
@@ -141,9 +171,15 @@ async function callKontext(params: {
   maskBase64: string;
   refBase64: string;
   prompt: string;
+  treeIndex: number;
 }): Promise<string> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) throw new Error('FAL_KEY not set');
+
+  // Save debug images before API call
+  saveDebugImage(params.imageBase64, `tree${params.treeIndex}-input`);
+  saveDebugImage(params.maskBase64, `tree${params.treeIndex}-mask`);
+  saveDebugImage(params.refBase64, `tree${params.treeIndex}-reference`);
 
   const payload = {
     image_url: params.imageBase64,
@@ -152,8 +188,8 @@ async function callKontext(params: {
     prompt: params.prompt,
     num_images: 1,
     output_format: 'jpeg',
-    strength: 0.85,
-    guidance_scale: 3.0,
+    strength: 0.95,         // INCREASED from 0.85 — stronger inpainting effect
+    guidance_scale: 3.5,    // Slightly increased for more prompt adherence
     num_inference_steps: 28,
     sync_mode: true,  // KEY: return image data in response, no CDN download
   };
@@ -173,7 +209,7 @@ async function callKontext(params: {
 
   for (const ep of endpoints) {
     try {
-      console.log(`[Kontext] API call via ${ep.name}...`);
+      console.log(`[Kontext] API call via ${ep.name}... (strength=${payload.strength}, guidance=${payload.guidance_scale})`);
       const t = Date.now();
       const res = await fetch(ep.url, {
         method: 'POST',
@@ -191,16 +227,31 @@ async function callKontext(params: {
       const data: any = await res.json();
       const imageUrl = data.images?.[0]?.url;
       if (!imageUrl) {
-        console.warn(`[Kontext] ${ep.name}: no image in response`);
+        console.warn(`[Kontext] ${ep.name}: no image in response. Keys: ${Object.keys(data).join(',')}`);
+        console.warn(`[Kontext] Response snippet: ${JSON.stringify(data).slice(0, 500)}`);
         continue;
       }
 
-      console.log(`[Kontext] ${ep.name} success in ${Date.now() - t}ms`);
+      const elapsed = Date.now() - t;
+      console.log(`[Kontext] ${ep.name} success in ${elapsed}ms`);
 
       // With sync_mode=true, imageUrl is a data URI (data:image/jpeg;base64,...)
       // With sync_mode=false, it's a URL (https://fal.media/...)
       if (imageUrl.startsWith('data:')) {
-        return imageUrl; // Already base64, no download needed!
+        // Verify the result is actually different from input
+        const inputSize = params.imageBase64.length;
+        const outputSize = imageUrl.length;
+        const sizeDiff = Math.abs(outputSize - inputSize);
+        const pctDiff = (sizeDiff / inputSize * 100).toFixed(1);
+        console.log(`[Kontext] Input base64: ${inputSize} chars, Output base64: ${outputSize} chars, Diff: ${pctDiff}%`);
+
+        if (sizeDiff < 100) {
+          console.warn(`[Kontext] WARNING: Output nearly identical to input! The inpainting may not have worked.`);
+        }
+
+        // Save output for debugging
+        saveDebugImage(imageUrl, `tree${params.treeIndex}-output`);
+        return imageUrl;
       }
 
       // Fallback: if sync_mode didn't work, download from URL
@@ -209,7 +260,9 @@ async function callKontext(params: {
         const dlRes = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
         if (dlRes.ok) {
           const buf = Buffer.from(await dlRes.arrayBuffer());
-          return `data:image/jpeg;base64,${buf.toString('base64')}`;
+          const result = `data:image/jpeg;base64,${buf.toString('base64')}`;
+          saveDebugImage(result, `tree${params.treeIndex}-output`);
+          return result;
         }
       } catch { /* try proxy */ }
 
@@ -219,7 +272,9 @@ async function callKontext(params: {
         const dlRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
         if (dlRes.ok) {
           const buf = Buffer.from(await dlRes.arrayBuffer());
-          return `data:image/jpeg;base64,${buf.toString('base64')}`;
+          const result = `data:image/jpeg;base64,${buf.toString('base64')}`;
+          saveDebugImage(result, `tree${params.treeIndex}-output`);
+          return result;
         }
       }
 
@@ -252,6 +307,18 @@ export async function kontextAddTrees(options: {
   const sharp = (await import('sharp')).default;
   const trees = options.trees.slice(0, 3);
   console.log(`[Kontext] Starting: ${trees.length} trees`);
+  console.log(`[Kontext] Trees:`, trees.map(t => `${t.treeName} @(${t.x.toFixed(2)},${t.y.toFixed(2)} ${t.width.toFixed(2)}x${t.height.toFixed(2)}) img:${t.treeImageUrl}`));
+
+  // Clean up old debug images
+  const debugDir = path.join(process.cwd(), 'uploads', 'ai-debug');
+  try {
+    if (fs.existsSync(debugDir)) {
+      const files = fs.readdirSync(debugDir);
+      for (const f of files) {
+        fs.unlinkSync(path.join(debugDir, f));
+      }
+    }
+  } catch { /* ignore */ }
 
   const garden = await prepareGardenPhoto(options.gardenPhotoPath);
   let currentBase64 = garden.base64;
@@ -259,20 +326,30 @@ export async function kontextAddTrees(options: {
   let currentH = garden.height;
   let succeeded = 0;
 
+  console.log(`[Kontext] Garden prepared: ${currentW}x${currentH}, base64 length: ${currentBase64.length}`);
+
   for (let i = 0; i < trees.length; i++) {
     const tree = trees[i];
-    console.log(`[Kontext] Tree ${i + 1}/${trees.length}: ${tree.treeName} (${tree.treeImageUrl})`);
+    console.log(`[Kontext] Tree ${i + 1}/${trees.length}: ${tree.treeName}`);
+    console.log(`[Kontext]   Image: ${tree.treeImageUrl}`);
+    console.log(`[Kontext]   Position: center=(${tree.x.toFixed(2)},${tree.y.toFixed(2)}) size=${tree.width.toFixed(2)}x${tree.height.toFixed(2)}`);
 
     try {
       const refBase64 = await imageToBase64(tree.treeImageUrl);
+      console.log(`[Kontext]   Reference image loaded: ${refBase64.length} chars`);
+
       const maskBase64 = await generateMask(currentW, currentH, tree);
-      const prompt = `A ${tree.treeName} ornamental tree naturally planted in the ground. Realistic proportions, natural lighting, proper shadows. Photorealistic.`;
+      console.log(`[Kontext]   Mask generated: ${maskBase64.length} chars`);
+
+      // More descriptive prompt for better results
+      const prompt = `Add a beautiful ${tree.treeName} ornamental tree planted naturally in the ground at this location. The tree should look like the reference image. Realistic garden photography, natural lighting, proper shadows on the ground, photorealistic quality. The tree trunk meets the ground naturally.`;
 
       const resultBase64 = await callKontext({
         imageBase64: currentBase64,
         maskBase64,
         refBase64,
         prompt,
+        treeIndex: i + 1,
       });
 
       // Update current image for next iteration
@@ -283,9 +360,10 @@ export async function kontextAddTrees(options: {
       currentW = meta.width!;
       currentH = meta.height!;
       succeeded++;
-      console.log(`[Kontext] Tree ${i + 1} done: ${currentW}x${currentH}`);
+      console.log(`[Kontext] Tree ${i + 1} done: ${currentW}x${currentH}, result: ${resultBase64.length} chars`);
     } catch (err: any) {
       console.error(`[Kontext] Tree ${i + 1} failed: ${err.message}`);
+      console.error(`[Kontext] Tree ${i + 1} stack: ${err.stack?.slice(0, 300)}`);
     }
   }
 

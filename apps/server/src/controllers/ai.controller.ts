@@ -620,8 +620,9 @@ export async function generatePlanHandler(req: Request, res: Response) {
 
         // AI returns x,y as top-left corner. Convert to our convention:
         // x = center of tree, y = ground level (bottom of tree)
-        const clampedW = Math.max(0.05, Math.min(0.18, tp.width));
-        const clampedH = Math.max(0.08, Math.min(0.40, tp.height));
+        // Minimum mask size: 12% width, 20% height — smaller masks produce invisible results
+        const clampedW = Math.max(0.12, Math.min(0.22, tp.width));
+        const clampedH = Math.max(0.20, Math.min(0.45, tp.height));
         const centerX = Math.max(0.05, Math.min(0.95, tp.x + clampedW / 2));
         const groundY = Math.max(0.60, Math.min(0.92, tp.y + clampedH));
 
@@ -648,8 +649,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
           // x = center of tree, y = ground level (bottom of tree)
           x: 0.05 + (0.85 / 6) * (idx + 1),
           y: 0.82,   // ground level — most garden photos have ground at ~80% height
-          width: 0.15,
-          height: 0.35,
+          width: 0.18,
+          height: 0.38,
         });
       }
     }
@@ -670,8 +671,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
         // x = center of tree, y = ground level (bottom of tree)
         x: 0.1 + (0.8 / (count + 1)) * (i + 1),
         y: 0.82,
-        width: 0.15,
-        height: 0.35,
+        width: 0.18,
+        height: 0.38,
       }));
     }
 
