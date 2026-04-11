@@ -375,7 +375,25 @@ export async function kontextAddTrees(options: {
     console.log(`[Kontext]   Position: center=(${tree.x.toFixed(2)},${tree.y.toFixed(2)}) size=${tree.width.toFixed(2)}x${tree.height.toFixed(2)}`);
 
     try {
-      const refBase64 = await imageToBase64(tree.treeImageUrl);
+      let refBase64 = await imageToBase64(tree.treeImageUrl);
+      // Crop bottom 20% of reference image to remove pot/container
+      // Most tree product photos have the pot in the bottom portion
+      try {
+        const refData = refBase64.split(',')[1];
+        const refBuf = Buffer.from(refData, 'base64');
+        const refMeta = await sharp(refBuf).metadata();
+        if (refMeta.width && refMeta.height) {
+          const cropH = Math.round(refMeta.height * 0.80); // keep top 80%
+          const cropped = await sharp(refBuf)
+            .extract({ left: 0, top: 0, width: refMeta.width, height: cropH })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          refBase64 = `data:image/jpeg;base64,${cropped.toString('base64')}`;
+          console.log(`[Kontext]   Cropped reference: ${refMeta.width}x${refMeta.height} → ${refMeta.width}x${cropH} (removed pot)`);
+        }
+      } catch (cropErr) {
+        console.warn(`[Kontext]   Crop failed, using original:`, cropErr);
+      }
       console.log(`[Kontext]   Reference image loaded: ${refBase64.length} chars`);
 
       const maskBase64 = await generateMask(currentW, currentH, tree);
