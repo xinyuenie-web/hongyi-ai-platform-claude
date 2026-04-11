@@ -20,6 +20,7 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
       FAL_PROXY_URL: process.env.FAL_PROXY_URL || 'NOT SET',
       DOUBAO_VISION_API_KEY: process.env.DOUBAO_VISION_API_KEY || process.env.DOUBAO_API_KEY ? 'SET' : 'NOT SET',
       DOUBAO_VISION_MODEL: process.env.DOUBAO_VISION_MODEL || 'doubao-seed-2-0-pro-260215 (default)',
+      DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY ? `${process.env.DASHSCOPE_API_KEY.slice(0, 8)}...` : 'NOT SET',
     },
     checks: {} as Record<string, any>,
   };
