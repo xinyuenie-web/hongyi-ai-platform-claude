@@ -1,5 +1,9 @@
 /**
- * Flux Kontext Lora Inpaint Service
+ * @deprecated — This service is NO LONGER USED. Replaced by tree-composite.service.ts
+ * which uses BiRefNet background removal + Sharp compositing for 100% accurate tree matching.
+ * Kept for reference only. Do not import or call from controller.
+ *
+ * OLD: Flux Kontext Lora Inpaint Service
  *
  * Uses fal.ai's Flux Kontext model for reference-image-guided inpainting.
  * Given a garden photo + tree product photo + mask, the AI generates

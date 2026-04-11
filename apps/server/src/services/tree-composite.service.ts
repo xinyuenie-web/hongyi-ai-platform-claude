@@ -250,21 +250,30 @@ export async function compositeTreesOnGarden(options: {
 
   console.log(`[TreeComposite] Processing ${options.trees.length} trees on ${baseW}x${baseH} garden...`);
 
-  // 2. Process trees SEQUENTIALLY (avoids BiRefNet rate limiting)
-  const overlays: Array<{ input: Buffer; left: number; top: number }> = [];
+  // Sort trees by y coordinate (ascending) — far trees first, near trees on top
+  const sortedTrees = [...options.trees].sort((a, b) => a.y - b.y);
 
-  for (let idx = 0; idx < options.trees.length; idx++) {
-    const tree = options.trees[idx];
-    console.log(`[TreeComposite] Tree ${idx + 1}/${options.trees.length}: ${tree.treeName} (${tree.imageUrl})`);
+  // 2. Process trees SEQUENTIALLY (avoids BiRefNet rate limiting)
+  const overlays: Array<{ input: Buffer; left: number; top: number; y: number }> = [];
+
+  for (let idx = 0; idx < sortedTrees.length; idx++) {
+    const tree = sortedTrees[idx];
+    console.log(`[TreeComposite] Tree ${idx + 1}/${sortedTrees.length}: ${tree.treeName} (${tree.imageUrl})`);
 
     try {
       // Read tree image
       const treeImgBuf = await readTreeImage(tree.imageUrl);
       console.log(`[TreeComposite] Tree ${idx + 1} image: ${treeImgBuf.length} bytes`);
 
-      // Calculate target dimensions
-      const targetW = Math.max(40, Math.round(tree.width * baseW));
-      const targetH = Math.max(60, Math.round(tree.height * baseH));
+      // Perspective scaling: trees further away (smaller y) appear smaller
+      const perspectiveScale = 0.6 + (tree.y - 0.5) * 0.8; // y=0.5→60%, y=1.0→100%
+      const clampedScale = Math.max(0.5, Math.min(1.0, perspectiveScale));
+
+      // Calculate target dimensions with perspective
+      const rawW = Math.max(40, Math.round(tree.width * baseW));
+      const rawH = Math.max(60, Math.round(tree.height * baseH));
+      const targetW = Math.round(rawW * clampedScale);
+      const targetH = Math.round(rawH * clampedScale);
 
       // Position: x is center of tree, y is bottom of tree (ground level)
       const targetX = Math.max(0, Math.min(baseW - targetW, Math.round(tree.x * baseW - targetW / 2)));
@@ -277,8 +286,17 @@ export async function compositeTreesOnGarden(options: {
         const cutoutBuf = await removeBackground(treeImgBuf);
         console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
 
-        // Resize cutout to target dimensions
-        overlayBuf = await sharp(cutoutBuf)
+        // Crop bottom 20% to remove pot/container
+        const cutoutMeta = await sharp(cutoutBuf).metadata();
+        const cropH = Math.round(cutoutMeta.height! * 0.80);
+        const croppedCutout = await sharp(cutoutBuf)
+          .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
+          .png()
+          .toBuffer();
+        console.log(`[TreeComposite] Tree ${idx + 1} pot cropped: ${cutoutMeta.height}→${cropH}px`);
+
+        // Resize cropped cutout to target dimensions
+        overlayBuf = await sharp(croppedCutout)
           .resize(targetW, targetH, {
             fit: 'contain',
             background: { r: 0, g: 0, b: 0, alpha: 0 },
@@ -291,8 +309,28 @@ export async function compositeTreesOnGarden(options: {
         overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
       }
 
-      console.log(`[TreeComposite] Tree ${idx + 1} overlay: ${targetW}x${targetH} at (${targetX},${targetY})`);
-      overlays.push({ input: overlayBuf, left: targetX, top: targetY });
+      // Generate shadow (elliptical, semi-transparent, below tree)
+      const shadowW = Math.round(targetW * 0.6);
+      const shadowH = Math.round(shadowW * 0.2);
+      const shadowX = Math.max(0, Math.min(baseW - shadowW, targetX + Math.round((targetW - shadowW) / 2)));
+      const shadowY = Math.min(baseH - shadowH, targetY + targetH - Math.round(shadowH * 0.3));
+      const shadowSvg = Buffer.from(
+        `<svg width="${shadowW}" height="${shadowH}">
+          <defs>
+            <radialGradient id="sg" cx="50%" cy="50%" rx="50%" ry="50%">
+              <stop offset="0%" stop-color="black" stop-opacity="0.25"/>
+              <stop offset="100%" stop-color="black" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <ellipse cx="${shadowW / 2}" cy="${shadowH / 2}" rx="${shadowW / 2}" ry="${shadowH / 2}" fill="url(#sg)"/>
+        </svg>`,
+      );
+      const shadowBuf = await sharp(shadowSvg).png().toBuffer();
+
+      // Shadow first (behind tree), then tree on top
+      overlays.push({ input: shadowBuf, left: shadowX, top: shadowY, y: tree.y - 0.001 });
+      console.log(`[TreeComposite] Tree ${idx + 1} overlay: ${targetW}x${targetH} at (${targetX},${targetY}) scale=${clampedScale.toFixed(2)}`);
+      overlays.push({ input: overlayBuf, left: targetX, top: targetY, y: tree.y });
     } catch (err: any) {
       console.error(`[TreeComposite] Tree ${idx + 1} (${tree.treeName}) FAILED entirely: ${err.message}`);
     }
@@ -302,11 +340,14 @@ export async function compositeTreesOnGarden(options: {
     throw new Error('所有树木图片处理失败，无法生成效果图');
   }
 
-  console.log(`[TreeComposite] Compositing ${overlays.length} trees onto garden...`);
+  // Sort overlays by y (far→near) for correct depth layering
+  overlays.sort((a, b) => a.y - b.y);
 
-  // 3. Composite all tree overlays onto garden photo
+  console.log(`[TreeComposite] Compositing ${overlays.length} layers onto garden...`);
+
+  // 3. Composite all overlays onto garden photo
   const result = await sharp(baseBuffer)
-    .composite(overlays)
+    .composite(overlays.map(o => ({ input: o.input, left: o.left, top: o.top })))
     .jpeg({ quality: 90 })
     .toBuffer();
 

@@ -462,7 +462,7 @@ export default function AIPlanPage() {
                     <Sparkles className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-amber-500" />
                   </div>
                   <p className="text-sm font-medium text-gray-700">AI正在为您设计庭院效果图...</p>
-                  <p className="mt-1 text-xs text-gray-400">预计需要1-2分钟，请耐心等待</p>
+                  <p className="mt-1 text-xs text-gray-400">预计需要约30秒，请耐心等待</p>
                 </div>
               ) : (
                 <button

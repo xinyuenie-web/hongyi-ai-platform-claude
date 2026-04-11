@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
 import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
-import { kontextAddTrees } from '../services/kontext-inpaint.service.js';
+import { compositeTreesOnGarden } from '../services/tree-composite.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
@@ -438,12 +438,68 @@ function recordUsage(phone: string) {
  *  - treeIds (JSON string array, required)
  *  - message (string, optional)
  *
- * NEW FLOW (serial, because Flux Fill depends on AI analysis results):
+ * NEW FLOW:
  * 1. Parallel: Seed-2.0-pro analysis (with coordinates) + rule-based analysis (fallback)
  * 2. Extract tree placement coordinates from AI analysis
- * 3. Call Flux Fill (original photo + mask from coordinates + prompt) — TRUE inpainting
- * 4. Return: effect image (original preserved!) + analysis report
+ * 3. BiRefNet background removal + Sharp compositing — real tree photos on garden
+ * 4. Return: effect image (garden 100% preserved, trees 100% match product photos) + analysis report
  */
+
+interface TreePlacementForLayout {
+  treeName: string;
+  coverImage: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Apply layout preferences from user's text description to tree placements.
+ * Supports: 对称布局, 留车位/停车, 风水方位
+ */
+function applyLayoutPreferences(placements: TreePlacementForLayout[], msg: string): TreePlacementForLayout[] {
+  if (!msg || placements.length === 0) return placements;
+
+  // 对称布局：mirror trees to both sides
+  if (msg.includes('对称') || msg.includes('对植')) {
+    const mirrored: TreePlacementForLayout[] = [];
+    for (const p of placements) {
+      mirrored.push(p);
+      if (Math.abs(p.x - 0.5) > 0.05) {
+        mirrored.push({ ...p, x: 1 - p.x, treeName: p.treeName });
+      }
+    }
+    console.log(`[LayoutPreference] 对称布局: ${placements.length} → ${mirrored.length} trees`);
+    return mirrored.slice(0, 5);
+  }
+
+  // 留车位：push trees away from center (x=0.3~0.7)
+  if (msg.includes('留车位') || msg.includes('停车')) {
+    const adjusted = placements.map(p => {
+      if (p.x > 0.3 && p.x < 0.7) {
+        const newX = p.x < 0.5 ? 0.15 : 0.85;
+        console.log(`[LayoutPreference] 留车位: ${p.treeName} x=${p.x.toFixed(2)} → ${newX}`);
+        return { ...p, x: newX };
+      }
+      return p;
+    });
+    return adjusted;
+  }
+
+  // 风水 + 东南：place main tree at southeast (x=0.7~0.9, y=0.6~0.8)
+  if (msg.includes('风水') && msg.includes('东南')) {
+    if (placements.length > 0) {
+      const adjusted = [...placements];
+      adjusted[0] = { ...adjusted[0], x: 0.8, y: 0.7 };
+      console.log(`[LayoutPreference] 风水东南: ${adjusted[0].treeName} → (0.80, 0.70)`);
+      return adjusted;
+    }
+  }
+
+  return placements;
+}
+
 export async function generatePlanHandler(req: Request, res: Response) {
   try {
     const { name, phone, styleId, treeIds: treeIdsStr, message } = req.body;
@@ -620,14 +676,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
     // Each placement needs: treeName, coverImage, x, y, width, height
     // We build a unified list that has both coordinates AND image URLs
     // so we don't need to match names later (which is error-prone).
-    interface TreePlacement {
-      treeName: string;
-      coverImage: string;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    }
+    // TreePlacement = TreePlacementForLayout (defined above)
+    type TreePlacement = TreePlacementForLayout;
 
     // Helper: fuzzy match AI tree name to our selected trees
     function findTreeByName(aiName: string): any {
@@ -720,49 +770,49 @@ export async function generatePlanHandler(req: Request, res: Response) {
     ));
 
     // ============================================================
-    // STEP 3: Generate effect image using Flux Kontext
-    // — Reference-image-guided inpainting: AI sees the tree product photo
-    //   and generates it INTO the garden scene with proper lighting/perspective
-    // — Sequential: each tree builds on the previous result
-    // — Max 3 trees for speed (each takes ~15-20s)
+    // STEP 2.5: Apply layout preferences from user message
+    // ============================================================
+    treePlacements = applyLayoutPreferences(treePlacements, message || '');
+
+    // ============================================================
+    // STEP 3: Generate effect image using BiRefNet + Sharp compositing
+    // — BiRefNet removes tree photo backgrounds (transparent PNG)
+    // — Sharp composites real tree cutouts onto garden photo
+    // — Trees are 100% product photos (perfect match)
+    // — Garden photo is 100% preserved (zero modification)
     // ============================================================
     if (process.env.FAL_KEY) {
-      // Build Kontext items with tree cover images
-      const kontextItems = treePlacements
+      const compositeItems = treePlacements
         .filter((tp) => tp.coverImage)
-        .slice(0, 3) // max 3 for Kontext (sequential = slow)
+        .slice(0, 5)
         .map((tp) => ({
           treeName: tp.treeName,
-          treeImageUrl: tp.coverImage,
+          imageUrl: tp.coverImage,
           x: tp.x,
           y: tp.y,
           width: tp.width,
           height: tp.height,
         }));
 
-      if (kontextItems.length > 0) {
-        console.log(`[GeneratePlan] Step 3: Kontext inpaint with ${kontextItems.length} reference tree photos...`);
-        console.log(`[GeneratePlan] Kontext items:`, kontextItems.map(i => `${i.treeName} img:${i.treeImageUrl}`));
+      if (compositeItems.length > 0) {
+        console.log(`[GeneratePlan] Step 3: BiRefNet compositing with ${compositeItems.length} tree photos...`);
+        console.log(`[GeneratePlan] Composite items:`, compositeItems.map(i => `${i.treeName} img:${i.imageUrl}`));
         console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
         try {
-          // Ground treatment: DISABLED — Kontext Lora model is designed for object insertion,
-          // not texture replacement. Using it for ground changes (grass/stone) with a 40% mask
-          // destroys the scene (building changes, unrealistic textures). Need a different model
-          // or approach for ground treatment in the future.
           if (keywordGroundTreatment) {
-            console.log(`[GeneratePlan] Ground treatment detected but SKIPPED (feature disabled): ${keywordGroundTreatment.prompt.slice(0, 60)}...`);
+            console.log(`[GeneratePlan] Ground treatment detected: ${keywordGroundTreatment.prompt.slice(0, 60)}... (phase 2 — text advice only)`);
           }
-          const kontextResult = await kontextAddTrees({
+          const compositeResult = await compositeTreesOnGarden({
             gardenPhotoPath: gardenPhoto.path,
-            trees: kontextItems,
+            trees: compositeItems,
           });
-          response.generatedImage = kontextResult.imageUrl;
-          console.log('[GeneratePlan] Kontext inpaint succeeded!');
-        } catch (kontextErr: any) {
-          const errMsg = kontextErr.message || String(kontextErr);
-          const stack = kontextErr.stack?.slice(0, 500) || '';
-          console.error('[GeneratePlan] Kontext inpaint failed:', errMsg);
-          console.error('[GeneratePlan] Kontext stack:', stack);
+          response.generatedImage = compositeResult.imageUrl;
+          console.log('[GeneratePlan] BiRefNet compositing succeeded!');
+        } catch (compositeErr: any) {
+          const errMsg = compositeErr.message || String(compositeErr);
+          const stack = compositeErr.stack?.slice(0, 500) || '';
+          console.error('[GeneratePlan] Compositing failed:', errMsg);
+          console.error('[GeneratePlan] Compositing stack:', stack);
           response.imageError = errMsg;
         }
       } else {
