@@ -251,6 +251,149 @@ export async function testFluxHandler(_req: Request, res: Response) {
 }
 
 /**
+ * GET /api/v1/ai/test-kontext
+ * End-to-end test of Flux Kontext reference-image inpainting pipeline.
+ * Uses a tiny synthetic garden image + HY0001 tree photo as reference.
+ * Returns detailed step-by-step results for debugging.
+ */
+export async function testKontextHandler(_req: Request, res: Response) {
+  const steps: Array<{ step: string; status: string; detail?: string; ms?: number }> = [];
+  const start = Date.now();
+
+  try {
+    const falKey = process.env.FAL_KEY;
+    if (!falKey) {
+      steps.push({ step: 'env', status: 'FAIL', detail: 'FAL_KEY not set' });
+      return res.json({ success: false, steps });
+    }
+    steps.push({ step: 'env', status: 'OK' });
+
+    // Step 1: Create a tiny test garden image (128x96 — ground + sky)
+    const sharp = (await import('sharp')).default;
+    const t1 = Date.now();
+    // Sky (top half) + ground (bottom half)
+    const skyBuf = await sharp({
+      create: { width: 128, height: 48, channels: 3, background: { r: 135, g: 206, b: 235 } },
+    }).png().toBuffer();
+    const groundBuf = await sharp({
+      create: { width: 128, height: 48, channels: 3, background: { r: 139, g: 119, b: 101 } },
+    }).png().toBuffer();
+    const gardenBuf = await sharp(skyBuf)
+      .extend({ bottom: 48, background: { r: 139, g: 119, b: 101 } })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    steps.push({ step: 'create-garden', status: 'OK', detail: `${gardenBuf.length}b`, ms: Date.now() - t1 });
+
+    // Step 2: Load tree reference image (HY0001)
+    const t2 = Date.now();
+    let treeBase64: string;
+    const fs = await import('fs');
+    const path = await import('path');
+    // Try local first, then Docker website
+    const localPath = path.join(process.cwd(), '..', 'website', 'public', '/images/trees/HY0001.jpg');
+    if (fs.existsSync(localPath)) {
+      const buf = fs.readFileSync(localPath);
+      treeBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      steps.push({ step: 'load-tree-image', status: 'OK', detail: `local ${buf.length}b`, ms: Date.now() - t2 });
+    } else {
+      // Fetch from website container
+      const fetchRes = await fetch('http://website:3000/images/trees/HY0001.jpg', { signal: AbortSignal.timeout(10000) });
+      if (!fetchRes.ok) {
+        steps.push({ step: 'load-tree-image', status: 'FAIL', detail: `HTTP ${fetchRes.status} from website:3000` });
+        return res.json({ success: false, steps, totalMs: Date.now() - start });
+      }
+      const buf = Buffer.from(await fetchRes.arrayBuffer());
+      treeBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      steps.push({ step: 'load-tree-image', status: 'OK', detail: `docker ${buf.length}b`, ms: Date.now() - t2 });
+    }
+
+    // Step 3: Create mask (white rectangle on bottom-right area)
+    const t3 = Date.now();
+    const maskSvg = Buffer.from(
+      `<svg width="128" height="96"><rect width="128" height="96" fill="black"/><ellipse cx="90" cy="55" rx="25" ry="30" fill="white"/></svg>`,
+    );
+    const maskBuf = await sharp(maskSvg).png().toBuffer();
+    steps.push({ step: 'create-mask', status: 'OK', detail: `${maskBuf.length}b`, ms: Date.now() - t3 });
+
+    // Step 4: Call Kontext inpaint
+    const t4 = Date.now();
+    const gardenBase64 = `data:image/jpeg;base64,${gardenBuf.toString('base64')}`;
+    const maskBase64 = `data:image/png;base64,${maskBuf.toString('base64')}`;
+
+    const body = JSON.stringify({
+      image_url: gardenBase64,
+      mask_url: maskBase64,
+      reference_image_url: treeBase64,
+      prompt: 'A small ornamental tree naturally planted in the ground',
+      num_images: 1,
+      output_format: 'jpeg',
+      strength: 0.85,
+      num_inference_steps: 20,
+    });
+
+    let resultImageUrl: string | null = null;
+
+    // Try direct fal.run
+    try {
+      const apiRes = await fetch('https://fal.run/fal-ai/flux-kontext-lora/inpaint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${falKey}` },
+        body,
+        signal: AbortSignal.timeout(120000),
+      });
+      const apiBody = await apiRes.text();
+      if (apiRes.ok) {
+        const data = JSON.parse(apiBody);
+        resultImageUrl = data.images?.[0]?.url || null;
+        steps.push({ step: 'kontext-direct', status: 'OK', detail: `URL: ${resultImageUrl?.slice(0, 60)}...`, ms: Date.now() - t4 });
+      } else {
+        steps.push({ step: 'kontext-direct', status: 'FAIL', detail: `HTTP ${apiRes.status}: ${apiBody.slice(0, 300)}`, ms: Date.now() - t4 });
+      }
+    } catch (err: any) {
+      steps.push({ step: 'kontext-direct', status: 'FAIL', detail: err.message, ms: Date.now() - t4 });
+    }
+
+    if (!resultImageUrl) {
+      return res.json({ success: false, steps, totalMs: Date.now() - start });
+    }
+
+    // Step 5: Download result
+    const t5 = Date.now();
+    try {
+      const dlRes = await fetch(resultImageUrl, { signal: AbortSignal.timeout(30000) });
+      if (dlRes.ok) {
+        const buf = Buffer.from(await dlRes.arrayBuffer());
+        steps.push({ step: 'download', status: 'OK', detail: `${buf.length} bytes`, ms: Date.now() - t5 });
+      } else {
+        // Try proxy
+        const proxyUrl = process.env.FAL_PROXY_URL;
+        if (proxyUrl) {
+          const urlObj = new URL(resultImageUrl);
+          const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
+          const cdnRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
+          if (cdnRes.ok) {
+            const buf = Buffer.from(await cdnRes.arrayBuffer());
+            steps.push({ step: 'download-proxy', status: 'OK', detail: `${buf.length} bytes`, ms: Date.now() - t5 });
+          } else {
+            steps.push({ step: 'download', status: 'FAIL', detail: `direct ${dlRes.status}, proxy ${cdnRes.status}` });
+          }
+        } else {
+          steps.push({ step: 'download', status: 'FAIL', detail: `HTTP ${dlRes.status}` });
+        }
+      }
+    } catch (err: any) {
+      steps.push({ step: 'download', status: 'FAIL', detail: err.message, ms: Date.now() - t5 });
+    }
+
+    const allOk = steps.every((s) => s.status === 'OK');
+    return res.json({ success: allOk, steps, totalMs: Date.now() - start });
+  } catch (err: any) {
+    steps.push({ step: 'unexpected', status: 'FAIL', detail: err.message });
+    return res.json({ success: false, steps, totalMs: Date.now() - start });
+  }
+}
+
+/**
  * POST /api/v1/ai/analyze-garden
  * Body: { message: string, photos?: string[] }
  * or multipart with photos field

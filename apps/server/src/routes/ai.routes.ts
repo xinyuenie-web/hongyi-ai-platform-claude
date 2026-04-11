@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { analyzeGardenHandler, generatePlanHandler, diagnosticsHandler, testFluxHandler } from '../controllers/ai.controller.js';
+import { analyzeGardenHandler, generatePlanHandler, diagnosticsHandler, testFluxHandler, testKontextHandler } from '../controllers/ai.controller.js';
 import { uploadPhotos } from '../middleware/upload.js';
 import { generateCarePlan, getAllCareGuides, getCareGuide } from '../services/care-ai.service.js';
 
@@ -25,6 +25,9 @@ aiRouter.get('/image/:filename', (req, res) => {
 
 // Flux Fill end-to-end test (tiny image, ~$0.001 cost)
 aiRouter.get('/test-flux', testFluxHandler);
+
+// Kontext inpaint end-to-end test (uses HY0001 tree as reference, ~$0.03 cost)
+aiRouter.get('/test-kontext', testKontextHandler);
 
 // AI garden analysis (supports optional photo upload)
 aiRouter.post('/analyze-garden', uploadPhotos, analyzeGardenHandler);
