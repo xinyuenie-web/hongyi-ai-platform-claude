@@ -504,6 +504,9 @@ export default function AIPlanPage() {
                   <ImageIcon className="mx-auto mb-2 h-8 w-8 text-amber-400" />
                   <p className="text-sm font-medium text-amber-800">AI图像生成暂时不可用</p>
                   <p className="mt-1 text-xs text-amber-600">方案分析已完成，效果图功能稍后恢复</p>
+                  {(result as any).imageError && (
+                    <p className="mt-2 text-xs text-red-500">错误详情: {(result as any).imageError}</p>
+                  )}
                 </div>
               )}
 

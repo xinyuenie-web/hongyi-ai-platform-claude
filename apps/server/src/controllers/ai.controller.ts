@@ -726,6 +726,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
 
       if (kontextItems.length > 0) {
         console.log(`[GeneratePlan] Step 3: Kontext inpaint with ${kontextItems.length} reference tree photos...`);
+        console.log(`[GeneratePlan] Kontext items:`, kontextItems.map(i => `${i.treeName} img:${i.treeImageUrl}`));
+        console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
         try {
           const kontextResult = await kontextAddTrees({
             gardenPhotoPath: gardenPhoto.path,
@@ -735,12 +737,15 @@ export async function generatePlanHandler(req: Request, res: Response) {
           console.log('[GeneratePlan] Kontext inpaint succeeded!');
         } catch (kontextErr: any) {
           const errMsg = kontextErr.message || String(kontextErr);
+          const stack = kontextErr.stack?.slice(0, 500) || '';
           console.error('[GeneratePlan] Kontext inpaint failed:', errMsg);
+          console.error('[GeneratePlan] Kontext stack:', stack);
           response.imageError = errMsg;
         }
       } else {
-        console.warn('[GeneratePlan] No tree cover images available for Kontext');
-        response.imageError = '所选树木没有产品照片，无法生成效果图';
+        const debugInfo = `treePlacements: ${treePlacements.length}, withCover: ${treePlacements.filter(p => p.coverImage).length}`;
+        console.warn(`[GeneratePlan] No tree cover images available. ${debugInfo}`);
+        response.imageError = `所选树木没有产品照片 (${debugInfo})`;
       }
     } else {
       console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');
