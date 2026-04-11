@@ -518,6 +518,44 @@ export async function generatePlanHandler(req: Request, res: Response) {
       source: 'website_form',
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
 
+    // --- Detect ground treatment from user message (keyword-based, reliable) ---
+    function detectGroundTreatment(msg: string): { prompt: string; groundRegion: { yStart: number; yEnd: number } } | null {
+      if (!msg) return null;
+      const grassKW = ['铺草', '草皮', '草坪', '绿草', '种草', '铺绿', '铺上草'];
+      const stoneKW = ['石板', '青石', '铺石', '板路'];
+      const gravelKW = ['鹅卵石', '碎石', '石子'];
+      for (const kw of grassKW) {
+        if (msg.includes(kw)) {
+          return {
+            prompt: 'Transform the bare dirt ground into a lush green grass lawn. The grass should cover all visible open ground area with natural lawn texture. Photorealistic garden photography, natural green grass.',
+            groundRegion: { yStart: 0.55, yEnd: 0.95 },
+          };
+        }
+      }
+      for (const kw of stoneKW) {
+        if (msg.includes(kw)) {
+          return {
+            prompt: 'Transform the ground into an elegant gray stone paving path with natural stone tiles. Photorealistic garden stone walkway.',
+            groundRegion: { yStart: 0.55, yEnd: 0.95 },
+          };
+        }
+      }
+      for (const kw of gravelKW) {
+        if (msg.includes(kw)) {
+          return {
+            prompt: 'Transform the ground into a decorative white and gray pebble gravel path. Photorealistic garden gravel walkway.',
+            groundRegion: { yStart: 0.55, yEnd: 0.95 },
+          };
+        }
+      }
+      return null;
+    }
+
+    const keywordGroundTreatment = detectGroundTreatment(message || '');
+    if (keywordGroundTreatment) {
+      console.log(`[GeneratePlan] Keyword ground treatment detected: ${keywordGroundTreatment.prompt.slice(0, 60)}...`);
+    }
+
     // --- Prepare data ---
     const treeInfos = selectedTrees.map((t: any) => ({
       name: t.name,
@@ -707,13 +745,21 @@ export async function generatePlanHandler(req: Request, res: Response) {
         console.log(`[GeneratePlan] Kontext items:`, kontextItems.map(i => `${i.treeName} img:${i.treeImageUrl}`));
         console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
         try {
-          const groundTreatment = response.aiAnalysis?.groundTreatment;
+          // Ground treatment: keyword detection (reliable) > Doubao Vision (optional)
+          const visionGround = response.aiAnalysis?.groundTreatment;
+          const groundSource = keywordGroundTreatment || (visionGround ? {
+            prompt: visionGround.prompt,
+            groundRegion: visionGround.groundRegion,
+          } : null);
+          if (groundSource) {
+            console.log(`[GeneratePlan] Ground treatment will be applied: ${groundSource.prompt.slice(0, 60)}...`);
+          }
           const kontextResult = await kontextAddTrees({
             gardenPhotoPath: gardenPhoto.path,
             trees: kontextItems,
-            groundTreatment: groundTreatment ? {
-              prompt: groundTreatment.prompt,
-              groundRegion: groundTreatment.groundRegion,
+            groundTreatment: groundSource ? {
+              prompt: groundSource.prompt,
+              groundRegion: groundSource.groundRegion,
               treePlacements: kontextItems.map(t => ({ x: t.x, y: t.y, width: t.width, height: t.height })),
             } : undefined,
           });

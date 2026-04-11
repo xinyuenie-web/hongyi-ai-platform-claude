@@ -528,7 +528,7 @@ export async function kontextAddTrees(options: {
         maskBase64: groundMask,
         prompt: options.groundTreatment.prompt + '. Photorealistic outdoor garden photography, natural lighting.',
         debugLabel: 'ground',
-        strength: 0.85, // Lower strength to preserve more original texture for natural blending
+        strength: 0.90, // Strong enough to change ground texture, but preserve surrounding context
       });
 
       currentBase64 = groundResult;
