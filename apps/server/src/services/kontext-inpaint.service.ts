@@ -199,20 +199,26 @@ async function callKontext(params: {
     saveDebugImage(params.refBase64, `${params.debugLabel}-reference`);
   }
 
+  // Use reference-guided Kontext model when reference provided,
+  // standard fill model for ground treatment (no reference needed)
+  const modelId = params.refBase64 ? MODEL_ID : 'fal-ai/flux-pro/v1/fill';
+
   const payload: Record<string, any> = {
     image_url: params.imageBase64,
     mask_url: params.maskBase64,
     prompt: params.prompt,
     num_images: 1,
     output_format: 'jpeg',
-    strength,
-    guidance_scale: 5.5,
-    num_inference_steps: 28,
     sync_mode: true,
   };
   if (params.refBase64) {
+    // Reference-guided inpainting: needs strength, guidance, reference image
     payload.reference_image_url = params.refBase64;
+    payload.strength = strength;
+    payload.guidance_scale = 5.5;
+    payload.num_inference_steps = 28;
   }
+  // Standard fill model uses simpler params (no strength/guidance needed)
 
   const headers = {
     'Content-Type': 'application/json',
@@ -221,15 +227,15 @@ async function callKontext(params: {
 
   const proxyUrl = process.env.FAL_PROXY_URL;
   const endpoints = [
-    { name: 'direct', url: `https://fal.run/${MODEL_ID}` },
+    { name: 'direct', url: `https://fal.run/${modelId}` },
   ];
   if (proxyUrl) {
-    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/${MODEL_ID}` });
+    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/${modelId}` });
   }
 
   for (const ep of endpoints) {
     try {
-      console.log(`[Kontext] API call via ${ep.name}... (strength=${payload.strength}, guidance=${payload.guidance_scale})`);
+      console.log(`[Kontext] API call via ${ep.name} model=${modelId} (strength=${payload.strength || 'default'}, guidance=${payload.guidance_scale || 'default'})`);
       const t = Date.now();
       const res = await fetch(ep.url, {
         method: 'POST',
