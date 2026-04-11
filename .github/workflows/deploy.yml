@@ -36,9 +36,10 @@ jobs:
           DOUBAO_VISION_API_KEY: ${{ secrets.DOUBAO_VISION_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
-          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY' '$DASHSCOPE_API_KEY'" << 'ENDSSH'
+          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY' '$DASHSCOPE_API_KEY' '$OPENAI_API_KEY'" << 'ENDSSH'
           set -e
           REPO_URL="$1"
           JWT_SECRET="$2"
@@ -46,6 +47,7 @@ jobs:
           DOUBAO_VISION_API_KEY="$4"
           FAL_KEY="$5"
           DASHSCOPE_API_KEY="$6"
+          OPENAI_API_KEY="$7"
           PROJECT_DIR="/opt/hongyi"
 
           echo "=== Deploy started at $(date) ==="
@@ -78,6 +80,7 @@ jobs:
           echo "DOUBAO_VISION_API_KEY=${DOUBAO_VISION_API_KEY}" >> .env
           echo "FAL_KEY=${FAL_KEY}" >> .env
           echo "DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}" >> .env
+          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> .env
           echo "FAL_PROXY_URL=http://43.129.236.142:8462" >> .env
           echo "NEXT_PUBLIC_API_URL=" >> .env
           echo "NODE_ENV=production" >> .env

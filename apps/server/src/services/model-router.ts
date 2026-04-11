@@ -5,12 +5,14 @@
 import type { ModelAdapter, VisionInput, VisionOutput } from './adapters/base-adapter.js';
 import { DoubaoVisionAdapter } from './adapters/doubao-vision.adapter.js';
 import { QwenVLAdapter } from './adapters/qwen-vl.adapter.js';
+import { OpenAIVisionAdapter } from './adapters/openai-vision.adapter.js';
 import { getVisionModelConfigs } from '../config/model-config.js';
 
 // Adapter registry
 const ADAPTER_MAP: Record<string, () => ModelAdapter> = {
   'qwen-vl-max': () => new QwenVLAdapter(),
   'doubao-seed-2.0-pro': () => new DoubaoVisionAdapter(),
+  'gpt-4o': () => new OpenAIVisionAdapter(),
 };
 
 // Health status cache
