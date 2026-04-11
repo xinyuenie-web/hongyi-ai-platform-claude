@@ -326,7 +326,7 @@ export default function AIPlanPage() {
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">选择心仪树木</h2>
               <p className="mb-5 text-sm text-gray-500">
-                选择想要种在庭院中的树木（最多10棵，效果图展示前5棵），已选
+                选择想要种在庭院中的树木（最多10棵，效果图展示前3棵），已选
                 <span className="font-semibold text-brand-green"> {form.treeIds.length} </span>棵
               </p>
               {treesLoading ? (

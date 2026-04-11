@@ -1,8 +1,7 @@
 import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
 import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
-import { fluxFillAddTrees } from '../services/flux-fill.service.js';
-import { compositeTreesOnGarden } from '../services/tree-composite.service.js';
+import { kontextAddTrees } from '../services/kontext-inpaint.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
@@ -562,60 +561,43 @@ export async function generatePlanHandler(req: Request, res: Response) {
     ));
 
     // ============================================================
-    // STEP 3: Generate effect image
-    // Strategy A (primary): Composite real tree photos onto garden
-    //   — removes background from each tree's product photo, overlays on garden
-    //   — shows the ACTUAL trees the user selected
-    // Strategy B (fallback): Flux Fill inpainting
-    //   — AI generates trees from text description
+    // STEP 3: Generate effect image using Flux Kontext
+    // — Reference-image-guided inpainting: AI sees the tree product photo
+    //   and generates it INTO the garden scene with proper lighting/perspective
+    // — Sequential: each tree builds on the previous result
+    // — Max 3 trees for speed (each takes ~15-20s)
     // ============================================================
     if (process.env.FAL_KEY) {
-      // Filter placements that have cover images for composite
-      const compositeItems = treePlacements
+      // Build Kontext items with tree cover images
+      const kontextItems = treePlacements
         .filter((tp) => tp.coverImage)
+        .slice(0, 3) // max 3 for Kontext (sequential = slow)
         .map((tp) => ({
           treeName: tp.treeName,
-          imageUrl: tp.coverImage,
+          treeImageUrl: tp.coverImage,
           x: tp.x,
           y: tp.y,
           width: tp.width,
           height: tp.height,
         }));
 
-      // Strategy A: Tree photo composite (primary)
-      if (compositeItems.length > 0) {
-        console.log(`[GeneratePlan] Step 3A: Compositing ${compositeItems.length} real tree photos...`);
+      if (kontextItems.length > 0) {
+        console.log(`[GeneratePlan] Step 3: Kontext inpaint with ${kontextItems.length} reference tree photos...`);
         try {
-          const compositeResult = await compositeTreesOnGarden({
+          const kontextResult = await kontextAddTrees({
             gardenPhotoPath: gardenPhoto.path,
-            trees: compositeItems,
+            trees: kontextItems,
           });
-          response.generatedImage = compositeResult.imageUrl;
-          console.log('[GeneratePlan] Tree composite succeeded!');
-        } catch (compositeErr: any) {
-          console.error('[GeneratePlan] Tree composite failed:', compositeErr.message);
-          console.error('[GeneratePlan] Falling back to Flux Fill...');
-        }
-      }
-
-      // Strategy B: Flux Fill fallback (if composite failed or no tree images)
-      if (!response.generatedImage) {
-        console.log('[GeneratePlan] Step 3B: Calling Flux Fill for inpainting...');
-        try {
-          const fluxResult = await fluxFillAddTrees({
-            gardenPhotoPath: gardenPhoto.path,
-            treePlacements: treePlacements.map(({ coverImage, ...rest }) => rest),
-            styleName,
-            userMessage: message || '',
-          });
-          response.generatedImage = fluxResult.imageUrl;
-          response.prompt = fluxResult.prompt;
-          console.log('[GeneratePlan] Flux Fill image generated successfully!');
-        } catch (fluxErr: any) {
-          const errMsg = fluxErr.message || String(fluxErr);
-          console.error('[GeneratePlan] Flux Fill also failed:', errMsg);
+          response.generatedImage = kontextResult.imageUrl;
+          console.log('[GeneratePlan] Kontext inpaint succeeded!');
+        } catch (kontextErr: any) {
+          const errMsg = kontextErr.message || String(kontextErr);
+          console.error('[GeneratePlan] Kontext inpaint failed:', errMsg);
           response.imageError = errMsg;
         }
+      } else {
+        console.warn('[GeneratePlan] No tree cover images available for Kontext');
+        response.imageError = '所选树木没有产品照片，无法生成效果图';
       }
     } else {
       console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');
