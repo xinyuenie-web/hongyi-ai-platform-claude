@@ -113,12 +113,12 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
   const base64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  const endpoints = [
-    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
-  ];
+  // Proxy first — server is in China, direct fal.run may be blocked or rate-limited
+  const endpoints: Array<{ name: string; url: string }> = [];
   if (proxyUrl) {
     endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/fal-ai/birefnet` });
   }
+  endpoints.push({ name: 'direct', url: 'https://fal.run/fal-ai/birefnet' });
 
   for (const ep of endpoints) {
     try {
@@ -129,7 +129,7 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
           'Content-Type': 'application/json',
           'Authorization': `Key ${falKey}`,
         },
-        body: JSON.stringify({ image_url: base64 }),
+        body: JSON.stringify({ image_url: base64, model: 'General Use (Heavy)' }),
         signal: AbortSignal.timeout(60000),
       });
 
@@ -259,6 +259,12 @@ export async function compositeTreesOnGarden(options: {
   for (let idx = 0; idx < sortedTrees.length; idx++) {
     const tree = sortedTrees[idx];
     console.log(`[TreeComposite] Tree ${idx + 1}/${sortedTrees.length}: ${tree.treeName} (${tree.imageUrl})`);
+
+    // Delay between BiRefNet API calls to avoid rate limiting
+    if (idx > 0) {
+      console.log(`[TreeComposite] Waiting 2s before next BiRefNet call...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
 
     try {
       // Read tree image
