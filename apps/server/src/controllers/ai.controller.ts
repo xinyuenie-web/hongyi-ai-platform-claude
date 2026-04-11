@@ -500,13 +500,20 @@ export async function generatePlanHandler(req: Request, res: Response) {
         if (treeId && usedTreeIds.has(treeId)) continue; // skip duplicate
         if (treeId) usedTreeIds.add(treeId);
 
+        // AI returns x,y as top-left corner. Convert to our convention:
+        // x = center of tree, y = ground level (bottom of tree)
+        const clampedW = Math.max(0.05, Math.min(0.18, tp.width));
+        const clampedH = Math.max(0.08, Math.min(0.40, tp.height));
+        const centerX = Math.max(0.05, Math.min(0.95, tp.x + clampedW / 2));
+        const groundY = Math.max(0.60, Math.min(0.92, tp.y + clampedH));
+
         treePlacements.push({
           treeName: (tree as any)?.name || tp.treeName,
           coverImage: (tree as any)?.coverImage || '',
-          x: Math.max(0, Math.min(0.9, tp.x)),
-          y: Math.max(0.2, Math.min(0.85, tp.y)),
-          width: Math.max(0.05, Math.min(0.18, tp.width)),
-          height: Math.max(0.08, Math.min(0.40, tp.height)),
+          x: centerX,
+          y: groundY,
+          width: clampedW,
+          height: clampedH,
         });
       }
       console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI (matched ${treePlacements.filter(p => p.coverImage).length} images)`);
