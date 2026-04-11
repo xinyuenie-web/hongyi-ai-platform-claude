@@ -202,7 +202,6 @@ async function callKontext(params: {
   const payload: Record<string, any> = {
     image_url: params.imageBase64,
     mask_url: params.maskBase64,
-    reference_image_url: params.refBase64,
     prompt: params.prompt,
     num_images: 1,
     output_format: 'jpeg',
@@ -211,6 +210,10 @@ async function callKontext(params: {
     num_inference_steps: 28,
     sync_mode: true,
   };
+  // Only include reference_image_url when actually provided (ground treatment doesn't use it)
+  if (params.refBase64) {
+    payload.reference_image_url = params.refBase64;
+  }
 
   const headers = {
     'Content-Type': 'application/json',
@@ -331,26 +334,6 @@ function getTreeVisualDescription(treeName: string): string {
     if (treeName.includes(species)) return desc;
   }
   return 'ornamental tree with natural foliage';
-}
-
-/**
- * Generate a simple reference image for ground treatment.
- * The Kontext Lora model requires a reference image — we generate
- * a solid color image that matches the desired ground material.
- */
-async function generateGroundReference(prompt: string): Promise<string> {
-  const sharp = (await import('sharp')).default;
-  // Choose color based on ground type
-  let r = 34, g = 139, b = 34; // default: green grass
-  if (prompt.includes('stone') || prompt.includes('paving')) {
-    r = 160; g = 160; b = 160; // gray stone
-  } else if (prompt.includes('gravel') || prompt.includes('pebble')) {
-    r = 200; g = 190; b = 170; // beige gravel
-  }
-  const buf = await sharp({
-    create: { width: 256, height: 256, channels: 3, background: { r, g, b } },
-  }).jpeg({ quality: 80 }).toBuffer();
-  return `data:image/jpeg;base64,${buf.toString('base64')}`;
 }
 
 /**
@@ -541,16 +524,17 @@ export async function kontextAddTrees(options: {
         options.groundTreatment.treePlacements,
       );
 
-      // Generate a reference image for the ground material (required by Kontext Lora model)
-      const groundRef = await generateGroundReference(options.groundTreatment.prompt);
+      // No reference image for ground — text prompt alone works better for textures
+      // (a solid-color reference image confuses the model and produces no change)
+      const groundPrompt = options.groundTreatment.prompt +
+        '. Cover the entire ground area completely. Photorealistic outdoor garden photography, natural sunlight, high detail texture.';
 
       const groundResult = await callKontext({
         imageBase64: currentBase64,
         maskBase64: groundMask,
-        refBase64: groundRef,
-        prompt: options.groundTreatment.prompt + '. Photorealistic outdoor garden photography, natural lighting.',
+        prompt: groundPrompt,
         debugLabel: 'ground',
-        strength: 0.90,
+        strength: 0.95,
       });
 
       currentBase64 = groundResult;
