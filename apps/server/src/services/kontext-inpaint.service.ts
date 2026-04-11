@@ -199,26 +199,18 @@ async function callKontext(params: {
     saveDebugImage(params.refBase64, `${params.debugLabel}-reference`);
   }
 
-  // Use reference-guided Kontext model when reference provided,
-  // standard fill model for ground treatment (no reference needed)
-  const modelId = params.refBase64 ? MODEL_ID : 'fal-ai/flux-pro/v1/fill';
-
   const payload: Record<string, any> = {
     image_url: params.imageBase64,
     mask_url: params.maskBase64,
+    reference_image_url: params.refBase64,
     prompt: params.prompt,
     num_images: 1,
     output_format: 'jpeg',
+    strength,
+    guidance_scale: 5.5,
+    num_inference_steps: 28,
     sync_mode: true,
   };
-  if (params.refBase64) {
-    // Reference-guided inpainting: needs strength, guidance, reference image
-    payload.reference_image_url = params.refBase64;
-    payload.strength = strength;
-    payload.guidance_scale = 5.5;
-    payload.num_inference_steps = 28;
-  }
-  // Standard fill model uses simpler params (no strength/guidance needed)
 
   const headers = {
     'Content-Type': 'application/json',
@@ -227,15 +219,15 @@ async function callKontext(params: {
 
   const proxyUrl = process.env.FAL_PROXY_URL;
   const endpoints = [
-    { name: 'direct', url: `https://fal.run/${modelId}` },
+    { name: 'direct', url: `https://fal.run/${MODEL_ID}` },
   ];
   if (proxyUrl) {
-    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/${modelId}` });
+    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/${MODEL_ID}` });
   }
 
   for (const ep of endpoints) {
     try {
-      console.log(`[Kontext] API call via ${ep.name} model=${modelId} (strength=${payload.strength || 'default'}, guidance=${payload.guidance_scale || 'default'})`);
+      console.log(`[Kontext] API call via ${ep.name} model=${MODEL_ID} (strength=${payload.strength}, guidance=${payload.guidance_scale})`);
       const t = Date.now();
       const res = await fetch(ep.url, {
         method: 'POST',
@@ -339,6 +331,26 @@ function getTreeVisualDescription(treeName: string): string {
     if (treeName.includes(species)) return desc;
   }
   return 'ornamental tree with natural foliage';
+}
+
+/**
+ * Generate a simple reference image for ground treatment.
+ * The Kontext Lora model requires a reference image — we generate
+ * a solid color image that matches the desired ground material.
+ */
+async function generateGroundReference(prompt: string): Promise<string> {
+  const sharp = (await import('sharp')).default;
+  // Choose color based on ground type
+  let r = 34, g = 139, b = 34; // default: green grass
+  if (prompt.includes('stone') || prompt.includes('paving')) {
+    r = 160; g = 160; b = 160; // gray stone
+  } else if (prompt.includes('gravel') || prompt.includes('pebble')) {
+    r = 200; g = 190; b = 170; // beige gravel
+  }
+  const buf = await sharp({
+    create: { width: 256, height: 256, channels: 3, background: { r, g, b } },
+  }).jpeg({ quality: 80 }).toBuffer();
+  return `data:image/jpeg;base64,${buf.toString('base64')}`;
 }
 
 /**
@@ -529,12 +541,16 @@ export async function kontextAddTrees(options: {
         options.groundTreatment.treePlacements,
       );
 
+      // Generate a reference image for the ground material (required by Kontext Lora model)
+      const groundRef = await generateGroundReference(options.groundTreatment.prompt);
+
       const groundResult = await callKontext({
         imageBase64: currentBase64,
         maskBase64: groundMask,
+        refBase64: groundRef,
         prompt: options.groundTreatment.prompt + '. Photorealistic outdoor garden photography, natural lighting.',
         debugLabel: 'ground',
-        strength: 0.90, // Strong enough to change ground texture, but preserve surrounding context
+        strength: 0.90,
       });
 
       currentBase64 = groundResult;
