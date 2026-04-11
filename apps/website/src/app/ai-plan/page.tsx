@@ -167,8 +167,8 @@ export default function AIPlanPage() {
       } else {
         setError(res.error?.message || 'AI方案生成失败，请稍后重试');
       }
-    } catch {
-      setError('网络错误，请稍后重试');
+    } catch (e: any) {
+      setError(`网络错误: ${e?.message || '请稍后重试'}`);
     } finally {
       setLoading(false);
     }

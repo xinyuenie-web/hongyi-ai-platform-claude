@@ -766,11 +766,18 @@ export async function generatePlanHandler(req: Request, res: Response) {
       success: true,
       data: response,
     });
-  } catch (error) {
-    console.error('Generate plan error:', error);
+  } catch (error: any) {
+    const errDetail = error?.message || String(error);
+    const errStack = error?.stack?.slice(0, 300) || '';
+    console.error('Generate plan error:', errDetail);
+    console.error('Generate plan stack:', errStack);
     return res.status(500).json({
       success: false,
-      error: { code: 'AI_ERROR', message: 'AI方案生成失败，请稍后重试' },
+      error: {
+        code: 'AI_ERROR',
+        message: `AI方案生成失败: ${errDetail}`,
+        debug: errStack,
+      },
     });
   }
 }
