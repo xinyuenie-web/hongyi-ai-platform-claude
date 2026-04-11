@@ -1,10 +1,11 @@
 import type { Request, Response } from 'express';
 import { analyzeGarden } from '../services/garden-ai.service.js';
-import { analyzeGardenWithAI, gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
-import { compositeTreesOnGarden } from '../services/tree-composite.service.js';
+import { gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
 import { Tree } from '../models/tree.model.js';
 import { GardenStyle } from '../models/garden-style.model.js';
 import { Inquiry } from '../models/inquiry.model.js';
+import * as inT from '../services/int-transformer.service.js';
+import * as ouT from '../services/out-transformer.service.js';
 
 /**
  * GET /api/v1/ai/diagnostics
@@ -107,6 +108,9 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
   } else {
     results.checks.doubaoVision = { status: 'SKIP', hint: 'DOUBAO_VISION_API_KEY not configured' };
   }
+
+  // Model router health (inT layer)
+  results.modelRouter = inT.getModelHealthStatus();
 
   const allOk = Object.values(results.checks).every((c: any) => c.status === 'OK' || c.status === 'SKIP');
   results.overall = allOk ? 'ALL_OK' : 'ISSUES_FOUND';
@@ -445,61 +449,21 @@ function recordUsage(phone: string) {
  * 4. Return: effect image (garden 100% preserved, trees 100% match product photos) + analysis report
  */
 
-interface TreePlacementForLayout {
-  treeName: string;
-  coverImage: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 /**
- * Apply layout preferences from user's text description to tree placements.
- * Supports: 对称布局, 留车位/停车, 风水方位
+ * POST /api/v1/ai/generate-plan
+ * Multipart form data:
+ *  - name (string, required)
+ *  - phone (string, required)
+ *  - styleId (string, optional)
+ *  - photos (file, required — garden photo)
+ *  - treeIds (JSON string array, required)
+ *  - message (string, optional)
+ *
+ * NEW ARCHITECTURE: inT (Input Transformer) + ouT (Output Transformer)
+ * 1. inT: Photo + trees + message → Model Router → DesignPlan (standardized JSON)
+ * 2. ouT: DesignPlan + garden photo → BiRefNet + Sharp → Effect image
+ * 3. Fallback: rule-based analysis if all AI models fail
  */
-function applyLayoutPreferences(placements: TreePlacementForLayout[], msg: string): TreePlacementForLayout[] {
-  if (!msg || placements.length === 0) return placements;
-
-  // 对称布局：mirror trees to both sides
-  if (msg.includes('对称') || msg.includes('对植')) {
-    const mirrored: TreePlacementForLayout[] = [];
-    for (const p of placements) {
-      mirrored.push(p);
-      if (Math.abs(p.x - 0.5) > 0.05) {
-        mirrored.push({ ...p, x: 1 - p.x, treeName: p.treeName });
-      }
-    }
-    console.log(`[LayoutPreference] 对称布局: ${placements.length} → ${mirrored.length} trees`);
-    return mirrored.slice(0, 5);
-  }
-
-  // 留车位：push trees away from center (x=0.3~0.7)
-  if (msg.includes('留车位') || msg.includes('停车')) {
-    const adjusted = placements.map(p => {
-      if (p.x > 0.3 && p.x < 0.7) {
-        const newX = p.x < 0.5 ? 0.15 : 0.85;
-        console.log(`[LayoutPreference] 留车位: ${p.treeName} x=${p.x.toFixed(2)} → ${newX}`);
-        return { ...p, x: newX };
-      }
-      return p;
-    });
-    return adjusted;
-  }
-
-  // 风水 + 东南：place main tree at southeast (x=0.7~0.9, y=0.6~0.8)
-  if (msg.includes('风水') && msg.includes('东南')) {
-    if (placements.length > 0) {
-      const adjusted = [...placements];
-      adjusted[0] = { ...adjusted[0], x: 0.8, y: 0.7 };
-      console.log(`[LayoutPreference] 风水东南: ${adjusted[0].treeName} → (0.80, 0.70)`);
-      return adjusted;
-    }
-  }
-
-  return placements;
-}
-
 export async function generatePlanHandler(req: Request, res: Response) {
   try {
     const { name, phone, styleId, treeIds: treeIdsStr, message } = req.body;
@@ -530,7 +494,6 @@ export async function generatePlanHandler(req: Request, res: Response) {
       });
     }
 
-    // Check garden photo
     const files = req.files as Express.Multer.File[] | undefined;
     const gardenPhoto = files?.[0];
     if (!gardenPhoto) {
@@ -540,7 +503,6 @@ export async function generatePlanHandler(req: Request, res: Response) {
       });
     }
 
-    // Rate limit
     if (!checkRateLimit(phone)) {
       return res.status(429).json({
         success: false,
@@ -555,7 +517,6 @@ export async function generatePlanHandler(req: Request, res: Response) {
     ]);
 
     const styleName = (style as any)?.name || '自然';
-    const styleType = (style as any)?.type || 'chinese';
 
     if (selectedTrees.length === 0) {
       return res.status(400).json({
@@ -574,55 +535,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       source: 'website_form',
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
 
-    // --- Detect ground treatment from user message (keyword-based, reliable) ---
-    function detectGroundTreatment(msg: string): { prompt: string; groundRegion: { yStart: number; yEnd: number } } | null {
-      if (!msg) return null;
-      const grassKW = ['铺草', '草皮', '草坪', '绿草', '种草', '铺绿', '铺上草'];
-      const stoneKW = ['石板', '青石', '铺石', '板路'];
-      const gravelKW = ['鹅卵石', '碎石', '石子'];
-      for (const kw of grassKW) {
-        if (msg.includes(kw)) {
-          return {
-            prompt: 'Transform the bare dirt ground into a lush green grass lawn. The grass should cover all visible open ground area with natural lawn texture. Photorealistic garden photography, natural green grass.',
-            groundRegion: { yStart: 0.55, yEnd: 0.95 },
-          };
-        }
-      }
-      for (const kw of stoneKW) {
-        if (msg.includes(kw)) {
-          return {
-            prompt: 'Transform the ground into an elegant gray stone paving path with natural stone tiles. Photorealistic garden stone walkway.',
-            groundRegion: { yStart: 0.55, yEnd: 0.95 },
-          };
-        }
-      }
-      for (const kw of gravelKW) {
-        if (msg.includes(kw)) {
-          return {
-            prompt: 'Transform the ground into a decorative white and gray pebble gravel path. Photorealistic garden gravel walkway.',
-            groundRegion: { yStart: 0.55, yEnd: 0.95 },
-          };
-        }
-      }
-      return null;
-    }
-
-    const keywordGroundTreatment = detectGroundTreatment(message || '');
-    if (keywordGroundTreatment) {
-      console.log(`[GeneratePlan] Keyword ground treatment detected: ${keywordGroundTreatment.prompt.slice(0, 60)}...`);
-    }
-
-    // --- Prepare data ---
-    const treeInfos = selectedTrees.map((t: any) => ({
-      name: t.name,
-      species: t.species,
-      height: t.specs?.height || 200,
-      crown: t.specs?.crown || 150,
-    }));
-
-    const analysisMessage = message || `${styleName}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
-
-    // Prepare garden photo base64 for vision model
+    // --- Prepare garden photo base64 ---
     let gardenPhotoBase64: string;
     try {
       gardenPhotoBase64 = gardenPhotoToBase64(gardenPhoto.path);
@@ -631,202 +544,96 @@ export async function generatePlanHandler(req: Request, res: Response) {
       gardenPhotoBase64 = '';
     }
 
-    // ============================================================
-    // STEP 1: Parallel — AI vision analysis + rule-based analysis
-    // ============================================================
-    console.log('[GeneratePlan] Step 1: Running AI analysis + rule-based analysis in parallel...');
-    const [visionResult, ruleResult] = await Promise.allSettled([
-      gardenPhotoBase64
-        ? analyzeGardenWithAI({
-            gardenPhotoBase64,
-            treeInfos,
-            styleName,
-            userMessage: message || '',
-          })
-        : Promise.reject(new Error('Garden photo not available for vision')),
-      analyzeGarden(analysisMessage, [gardenPhotoUrl]),
-    ]);
-
     const response: any = {
       generatedImage: null,
       analysis: null,
       aiAnalysis: null,
-      prompt: null,
+      modelUsed: null,
     };
 
-    // AI vision analysis result
-    if (visionResult.status === 'fulfilled') {
-      response.aiAnalysis = visionResult.value;
-      console.log('[GeneratePlan] Seed-2.0-pro AI analysis succeeded');
+    // ============================================================
+    // STEP 1: inT — Input Transformer (AI vision + layout preferences)
+    // Run in parallel with rule-based analysis as fallback
+    // ============================================================
+    const analysisMessage = message || `${styleName}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
+
+    const [intResult, ruleResult] = await Promise.allSettled([
+      gardenPhotoBase64
+        ? inT.transform({
+            gardenPhotoBase64,
+            selectedTrees: selectedTrees.map((t: any) => ({
+              treeId: t.treeId,
+              name: t.name,
+              species: t.species,
+              coverImage: t.coverImage || '',
+              height: t.specs?.height || 200,
+              crown: t.specs?.crown || 150,
+            })),
+            styleName,
+            userMessage: message || '',
+          })
+        : Promise.reject(new Error('Garden photo not available')),
+      analyzeGarden(analysisMessage, [gardenPhotoUrl]),
+    ]);
+
+    let designPlan: inT.DesignPlan | null = null;
+
+    if (intResult.status === 'fulfilled') {
+      designPlan = intResult.value;
+      response.aiAnalysis = {
+        designSummary: designPlan.designSummary,
+        spaceAnalysis: designPlan.spaceAnalysis,
+        treePlacement: designPlan.placements,
+        styleAdvice: designPlan.styleAdvice,
+        fengshuiTip: designPlan.fengshuiTip,
+        budgetEstimate: designPlan.budgetEstimate,
+        groundTreatment: designPlan.groundTreatment,
+      };
+      response.modelUsed = designPlan.modelId;
+      console.log(`[GeneratePlan] inT succeeded: model=${designPlan.modelId}, ${designPlan.processingMs}ms, ${designPlan.placements.length} placements`);
     } else {
-      console.error('[GeneratePlan] Seed-2.0-pro analysis failed:', visionResult.reason?.message || visionResult.reason);
+      console.error('[GeneratePlan] inT failed:', intResult.reason?.message || intResult.reason);
     }
 
-    // Rule-based analysis (always useful as fallback)
     if (ruleResult.status === 'fulfilled') {
       response.analysis = ruleResult.value;
-      console.log('[GeneratePlan] Rule-based analysis succeeded');
-    } else {
-      console.error('[GeneratePlan] Rule-based analysis failed:', ruleResult.reason?.message || ruleResult.reason);
     }
 
     // ============================================================
-    // STEP 2: Build tree placements with coordinates + cover images
+    // STEP 2: ouT — Output Transformer (BiRefNet + Sharp compositing)
     // ============================================================
-    // Each placement needs: treeName, coverImage, x, y, width, height
-    // We build a unified list that has both coordinates AND image URLs
-    // so we don't need to match names later (which is error-prone).
-    // TreePlacement = TreePlacementForLayout (defined above)
-    type TreePlacement = TreePlacementForLayout;
-
-    // Helper: fuzzy match AI tree name to our selected trees
-    function findTreeByName(aiName: string): any {
-      // Exact match
-      let tree = selectedTrees.find((t: any) => t.name === aiName);
-      if (tree) return tree;
-      // Partial match: AI name contains DB name or vice versa
-      tree = selectedTrees.find((t: any) => t.name.includes(aiName) || aiName.includes(t.name));
-      if (tree) return tree;
-      // Species match
-      tree = selectedTrees.find((t: any) => t.species === aiName || aiName.includes(t.species));
-      return tree || null;
-    }
-
-    let treePlacements: TreePlacement[] = [];
-    const usedTreeIds = new Set<string>(); // prevent duplicates
-
-    if (visionResult.status === 'fulfilled' && visionResult.value.treePlacement) {
-      // Use AI-analyzed coordinates — enrich with cover images immediately
-      for (const tp of visionResult.value.treePlacement) {
-        if (typeof tp.x !== 'number' || typeof tp.y !== 'number' ||
-            typeof tp.width !== 'number' || typeof tp.height !== 'number') continue;
-
-        const tree = findTreeByName(tp.treeName);
-        const treeId = (tree as any)?.treeId;
-        if (treeId && usedTreeIds.has(treeId)) continue; // skip duplicate
-        if (treeId) usedTreeIds.add(treeId);
-
-        // AI returns x,y as top-left corner. Convert to our convention:
-        // x = center of tree, y = ground level (bottom of tree)
-        // Compositing doesn't damage the scene, so allow larger tree sizes
-        const clampedW = Math.max(0.15, Math.min(0.35, tp.width));
-        const clampedH = Math.max(0.20, Math.min(0.45, tp.height));
-        const centerX = Math.max(0.05, Math.min(0.95, tp.x + clampedW / 2));
-        const groundY = Math.max(0.60, Math.min(0.92, tp.y + clampedH));
-
-        treePlacements.push({
-          treeName: (tree as any)?.name || tp.treeName,
-          coverImage: (tree as any)?.coverImage || '',
-          x: centerX,
-          y: groundY,
-          width: clampedW,
-          height: clampedH,
+    if (designPlan && process.env.FAL_KEY) {
+      try {
+        const outResult = await ouT.transform({
+          gardenPhotoPath: gardenPhoto.path,
+          designPlan,
         });
+        response.generatedImage = outResult.imageUrl;
+        console.log(`[GeneratePlan] ouT succeeded: ${outResult.strategy}, ${outResult.treeCount} trees, ${outResult.processingMs}ms`);
+      } catch (outErr: any) {
+        console.error('[GeneratePlan] ouT failed:', outErr.message);
+        response.imageError = outErr.message;
       }
-      console.log(`[GeneratePlan] Got ${treePlacements.length} tree placements from AI (matched ${treePlacements.filter(p => p.coverImage).length} images)`);
-
-      // If AI didn't place all selected trees, add remaining with auto coordinates
-      for (const t of selectedTrees as any[]) {
-        if (usedTreeIds.has(t.treeId)) continue;
-        if (treePlacements.length >= 5) break;
-        usedTreeIds.add(t.treeId);
-        const idx = treePlacements.length;
-        treePlacements.push({
-          treeName: t.name,
-          coverImage: t.coverImage || '',
-          // x = center of tree, y = ground level (bottom of tree)
-          x: 0.1 + (0.8 / (treePlacements.length + 2)) * (idx + 1),
-          y: 0.82,
-          width: 0.22,
-          height: 0.35,
-        });
-      }
-    }
-
-    // Limit to max 5 placements
-    if (treePlacements.length > 5) {
-      treePlacements = treePlacements.slice(0, 5);
-    }
-
-    // Fallback: if no AI coordinates at all, generate default placements
-    if (treePlacements.length === 0) {
-      console.log('[GeneratePlan] No AI coordinates, using default placements');
-      const count = Math.min(selectedTrees.length, 5);
-      const treesToPlace = (selectedTrees as any[]).slice(0, count);
-      treePlacements = treesToPlace.map((t, i) => ({
-        treeName: t.name,
-        coverImage: t.coverImage || '',
-        // x = center of tree, y = ground level (bottom of tree)
-        x: 0.1 + (0.8 / (count + 1)) * (i + 1),
-        y: 0.82,
-        width: 0.22,
-        height: 0.35,
-      }));
-    }
-
-    console.log('[GeneratePlan] Final placements:', treePlacements.map(p =>
-      `${p.treeName} (img:${p.coverImage ? 'yes' : 'NO'}) @(${p.x.toFixed(2)},${p.y.toFixed(2)} ${p.width.toFixed(2)}x${p.height.toFixed(2)})`
-    ));
-
-    // ============================================================
-    // STEP 2.5: Apply layout preferences from user message
-    // ============================================================
-    treePlacements = applyLayoutPreferences(treePlacements, message || '');
-
-    // ============================================================
-    // STEP 3: Generate effect image using BiRefNet + Sharp compositing
-    // — BiRefNet removes tree photo backgrounds (transparent PNG)
-    // — Sharp composites real tree cutouts onto garden photo
-    // — Trees are 100% product photos (perfect match)
-    // — Garden photo is 100% preserved (zero modification)
-    // ============================================================
-    if (process.env.FAL_KEY) {
-      const compositeItems = treePlacements
-        .filter((tp) => tp.coverImage)
-        .slice(0, 5)
-        .map((tp) => ({
-          treeName: tp.treeName,
-          imageUrl: tp.coverImage,
-          x: tp.x,
-          y: tp.y,
-          width: tp.width,
-          height: tp.height,
-        }));
-
-      if (compositeItems.length > 0) {
-        console.log(`[GeneratePlan] Step 3: BiRefNet compositing with ${compositeItems.length} tree photos...`);
-        console.log(`[GeneratePlan] Composite items:`, compositeItems.map(i => `${i.treeName} img:${i.imageUrl}`));
-        console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
+    } else if (!designPlan) {
+      // Fallback: no AI analysis, use default placements with ouT
+      const fallbackPlan = buildFallbackDesignPlan(selectedTrees as any[]);
+      if (process.env.FAL_KEY) {
         try {
-          if (keywordGroundTreatment) {
-            console.log(`[GeneratePlan] Ground treatment detected: ${keywordGroundTreatment.prompt.slice(0, 60)}... (phase 2 — text advice only)`);
-          }
-          const compositeResult = await compositeTreesOnGarden({
+          const outResult = await ouT.transform({
             gardenPhotoPath: gardenPhoto.path,
-            trees: compositeItems,
+            designPlan: fallbackPlan,
           });
-          response.generatedImage = compositeResult.imageUrl;
-          console.log('[GeneratePlan] BiRefNet compositing succeeded!');
-        } catch (compositeErr: any) {
-          const errMsg = compositeErr.message || String(compositeErr);
-          const stack = compositeErr.stack?.slice(0, 500) || '';
-          console.error('[GeneratePlan] Compositing failed:', errMsg);
-          console.error('[GeneratePlan] Compositing stack:', stack);
-          response.imageError = errMsg;
+          response.generatedImage = outResult.imageUrl;
+          console.log(`[GeneratePlan] ouT fallback succeeded: ${outResult.treeCount} trees`);
+        } catch (outErr: any) {
+          console.error('[GeneratePlan] ouT fallback failed:', outErr.message);
+          response.imageError = outErr.message;
         }
-      } else {
-        const debugInfo = `treePlacements: ${treePlacements.length}, withCover: ${treePlacements.filter(p => p.coverImage).length}`;
-        console.warn(`[GeneratePlan] No tree cover images available. ${debugInfo}`);
-        response.imageError = `所选树木没有产品照片 (${debugInfo})`;
       }
-    } else {
-      console.warn('[GeneratePlan] FAL_KEY not configured, skipping image generation');
     }
 
-    // Record usage
     recordUsage(phone);
 
-    // At least one result should be available
     if (!response.generatedImage && !response.aiAnalysis && !response.analysis) {
       return res.status(500).json({
         success: false,
@@ -834,22 +641,39 @@ export async function generatePlanHandler(req: Request, res: Response) {
       });
     }
 
-    return res.json({
-      success: true,
-      data: response,
-    });
+    return res.json({ success: true, data: response });
   } catch (error: any) {
     const errDetail = error?.message || String(error);
-    const errStack = error?.stack?.slice(0, 300) || '';
     console.error('Generate plan error:', errDetail);
-    console.error('Generate plan stack:', errStack);
     return res.status(500).json({
       success: false,
-      error: {
-        code: 'AI_ERROR',
-        message: `AI方案生成失败: ${errDetail}`,
-        debug: errStack,
-      },
+      error: { code: 'AI_ERROR', message: `AI方案生成失败: ${errDetail}` },
     });
   }
+}
+
+/** Build a fallback DesignPlan when all AI models fail */
+function buildFallbackDesignPlan(trees: any[]): inT.DesignPlan {
+  const count = Math.min(trees.length, 5);
+  const treesToPlace = trees.slice(0, count);
+  return {
+    modelId: 'fallback',
+    processingMs: 0,
+    designSummary: '使用默认布局',
+    spaceAnalysis: '',
+    placements: treesToPlace.map((t, i) => ({
+      treeName: t.name,
+      treeId: t.treeId,
+      coverImage: t.coverImage || '',
+      x: 0.1 + (0.8 / (count + 1)) * (i + 1),
+      y: 0.82,
+      width: 0.22,
+      height: 0.35,
+      position: '自动分配',
+      reason: '默认均匀布局',
+    })),
+    styleAdvice: '',
+    fengshuiTip: '',
+    budgetEstimate: '',
+  };
 }
