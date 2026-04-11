@@ -289,6 +289,33 @@ async function callKontext(params: {
 }
 
 /**
+ * Species → visual description mapping.
+ * Critical for AI to match the tree's actual appearance (color, shape, foliage).
+ * The reference_image_url alone is unreliable — the text prompt must describe
+ * the tree's distinctive visual features explicitly.
+ */
+const SPECIES_VISUAL: Record<string, string> = {
+  '罗汉松': 'dark green layered cloud-shaped canopy with thick brown trunk, evergreen pine-like foliage arranged in horizontal tiers',
+  '黑松': 'dark green pine needles, rugged dark bark, spreading irregular branches with dense needle clusters',
+  '五针松': 'soft blue-green short pine needles, elegant upright form with layered branches',
+  '榆树': 'small bright green leaves, twisted gnarled trunk, umbrella-shaped canopy',
+  '红花檵木': 'DEEP CRIMSON RED leaves covering the entire tree, vivid red-purple foliage, layered branch structure with striking red color throughout',
+  '对节白蜡': 'bright green compound leaves, smooth pale gray bark, graceful spreading form',
+  '紫薇': 'pink-purple flower clusters, smooth mottled bark, vase-shaped canopy',
+  '大阪松': 'green pine needles in horizontal layered tiers, compact bonsai-like form with clearly defined branch layers',
+  '黄杨': 'very dense tiny dark green leaves, compact rounded ball shape, tight foliage',
+  '枸骨': 'glossy dark green holly-like spiny leaves, dense compact form',
+};
+
+function getTreeVisualDescription(treeName: string): string {
+  // Try exact species match first, then partial match
+  for (const [species, desc] of Object.entries(SPECIES_VISUAL)) {
+    if (treeName.includes(species)) return desc;
+  }
+  return 'ornamental tree with natural foliage';
+}
+
+/**
  * Add trees to garden photo using Flux Kontext.
  *
  * Sequential process (each tree builds on previous result):
@@ -341,8 +368,9 @@ export async function kontextAddTrees(options: {
       const maskBase64 = await generateMask(currentW, currentH, tree);
       console.log(`[Kontext]   Mask generated: ${maskBase64.length} chars`);
 
-      // Prompt: clear instruction + emphasize matching reference image
-      const prompt = `Add the exact tree shown in the reference image into this garden. Keep the same colors, shape, and foliage style as the reference. The tree is a ${tree.treeName} ornamental tree planted naturally in the ground. Realistic photography, natural outdoor lighting, ground shadows. The tree matches the reference image precisely in color and form.`;
+      // Prompt: visual description of the specific species + reference matching
+      const visualDesc = getTreeVisualDescription(tree.treeName);
+      const prompt = `Add the tree from the reference image into this garden, planted directly in the ground without any pot or container. The tree has ${visualDesc}. Match the reference image exactly in color and shape. Photorealistic outdoor garden photography, natural lighting, soft ground shadows beneath the tree.`;
 
       const resultBase64 = await callKontext({
         imageBase64: currentBase64,
