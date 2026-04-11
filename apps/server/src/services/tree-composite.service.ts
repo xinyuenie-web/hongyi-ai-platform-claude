@@ -272,9 +272,9 @@ export async function compositeTreesOnGarden(options: {
       const treeImgBuf = await readTreeImage(tree.imageUrl);
       console.log(`[TreeComposite] Tree ${idx + 1} image: ${treeImgBuf.length} bytes`);
 
-      // Perspective scaling: trees further away (smaller y) appear smaller
-      const perspectiveScale = 0.6 + (tree.y - 0.5) * 0.8; // y=0.5→60%, y=1.0→100%
-      const clampedScale = Math.max(0.5, Math.min(1.0, perspectiveScale));
+      // Perspective scaling: trees further away (smaller y) appear slightly smaller
+      const perspectiveScale = 0.75 + (tree.y - 0.5) * 0.5; // y=0.5→75%, y=1.0→100%
+      const clampedScale = Math.max(0.7, Math.min(1.0, perspectiveScale));
 
       // Calculate target dimensions with perspective
       const rawW = Math.max(40, Math.round(tree.width * baseW));
@@ -293,9 +293,9 @@ export async function compositeTreesOnGarden(options: {
         const cutoutBuf = await removeBackground(treeImgBuf);
         console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
 
-        // Crop bottom 20% to remove pot/container
+        // Crop bottom 15% to remove pot/container
         const cutoutMeta = await sharp(cutoutBuf).metadata();
-        const cropH = Math.round(cutoutMeta.height! * 0.80);
+        const cropH = Math.round(cutoutMeta.height! * 0.85);
         const croppedCutout = await sharp(cutoutBuf)
           .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
           .png()

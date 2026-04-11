@@ -708,10 +708,9 @@ export async function generatePlanHandler(req: Request, res: Response) {
 
         // AI returns x,y as top-left corner. Convert to our convention:
         // x = center of tree, y = ground level (bottom of tree)
-        // Mask size: 12-20% width, 15-30% height
-        // Height capped at 0.30 to prevent mask overlapping buildings above ground line
-        const clampedW = Math.max(0.12, Math.min(0.20, tp.width));
-        const clampedH = Math.max(0.15, Math.min(0.30, tp.height));
+        // Compositing doesn't damage the scene, so allow larger tree sizes
+        const clampedW = Math.max(0.15, Math.min(0.35, tp.width));
+        const clampedH = Math.max(0.20, Math.min(0.45, tp.height));
         const centerX = Math.max(0.05, Math.min(0.95, tp.x + clampedW / 2));
         const groundY = Math.max(0.60, Math.min(0.92, tp.y + clampedH));
 
@@ -736,10 +735,10 @@ export async function generatePlanHandler(req: Request, res: Response) {
           treeName: t.name,
           coverImage: t.coverImage || '',
           // x = center of tree, y = ground level (bottom of tree)
-          x: 0.05 + (0.85 / 6) * (idx + 1),
-          y: 0.82,   // ground level — most garden photos have ground at ~80% height
-          width: 0.16,
-          height: 0.28,
+          x: 0.1 + (0.8 / (treePlacements.length + 2)) * (idx + 1),
+          y: 0.82,
+          width: 0.22,
+          height: 0.35,
         });
       }
     }
@@ -760,8 +759,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
         // x = center of tree, y = ground level (bottom of tree)
         x: 0.1 + (0.8 / (count + 1)) * (i + 1),
         y: 0.82,
-        width: 0.16,
-        height: 0.28,
+        width: 0.22,
+        height: 0.35,
       }));
     }
 
