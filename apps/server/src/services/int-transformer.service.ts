@@ -263,10 +263,14 @@ function matchAndEnrichPlacements(
     if (treeId) usedTreeIds.add(treeId);
 
     // Clamp coordinates to safe ranges
-    const clampedW = Math.max(0.15, Math.min(0.35, tp.width));
-    const clampedH = Math.max(0.20, Math.min(0.45, tp.height));
-    const centerX = Math.max(0.05, Math.min(0.95, tp.x + clampedW / 2));
-    const groundY = Math.max(0.60, Math.min(0.92, tp.y + clampedH));
+    // AI returns: x=center of tree, y=ground level (bottom of tree)
+    // per our system prompt instructions — do NOT add offset
+    const clampedW = Math.max(0.08, Math.min(0.25, tp.width));
+    const clampedH = Math.max(0.15, Math.min(0.40, tp.height));
+    const centerX = Math.max(0.08, Math.min(0.92, tp.x));
+    const groundY = Math.max(0.55, Math.min(0.92, tp.y));
+
+    console.log(`[inT] AI coords for ${tp.treeName}: x=${tp.x}, y=${tp.y}, w=${tp.width}, h=${tp.height} → clamped: x=${centerX.toFixed(2)}, y=${groundY.toFixed(2)}, w=${clampedW.toFixed(2)}, h=${clampedH.toFixed(2)}`);
 
     placements.push({
       treeName: tree?.name || tp.treeName,
@@ -291,10 +295,10 @@ function matchAndEnrichPlacements(
       treeName: t.name,
       treeId: t.treeId,
       coverImage: t.coverImage,
-      x: 0.1 + (0.8 / (placements.length + 2)) * (idx + 1),
+      x: 0.15 + (0.7 / (placements.length + 2)) * (idx + 1),
       y: 0.82,
-      width: 0.22,
-      height: 0.35,
+      width: 0.14,
+      height: 0.28,
       position: '自动分配位置',
       reason: 'AI未指定位置，按均匀分布放置',
     });
@@ -320,21 +324,24 @@ function applyLayoutPreferences(
 ): DesignPlan['placements'] {
   if (!msg) return placements;
 
-  // 对称布局
+  // 对称布局 — 树木左右对称镜像放置
   if (msg.includes('对称') && placements.length >= 2) {
-    const mirrored: DesignPlan['placements'] = [];
+    const result: DesignPlan['placements'] = [];
     const pairs = Math.floor(placements.length / 2);
     for (let i = 0; i < pairs; i++) {
-      const base = placements[i * 2];
-      const partner = placements[i * 2 + 1];
-      const offset = 0.15 + i * 0.08;
-      mirrored.push({ ...base, x: 0.5 - offset });
-      mirrored.push({ ...partner, x: 0.5 + offset });
+      const left = placements[i * 2];
+      const right = placements[i * 2 + 1];
+      // Symmetrical offset from center: 0.25 for first pair, 0.15 for second, etc.
+      const offset = 0.25 - i * 0.07;
+      const sharedY = Math.max(left.y, right.y); // same ground level
+      result.push({ ...left, x: 0.5 - offset, y: sharedY });
+      result.push({ ...right, x: 0.5 + offset, y: sharedY });
     }
     if (placements.length % 2 === 1) {
-      mirrored.push({ ...placements[placements.length - 1], x: 0.5 });
+      result.push({ ...placements[placements.length - 1], x: 0.5 });
     }
-    return mirrored;
+    console.log(`[inT] 对称布局: ${result.map(p => `${p.treeName}@(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(', ')}`);
+    return result;
   }
 
   // 留车位 — clear center area
