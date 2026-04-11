@@ -114,20 +114,32 @@ async function generateMask(
 ): Promise<string> {
   const sharp = (await import('sharp')).default;
 
-  // Ensure minimum viable mask size (at least 10% of image dimension)
+  // Ensure minimum viable mask size
   const minW = Math.max(60, Math.round(w * 0.10));
-  const minH = Math.max(80, Math.round(h * 0.15));
-  const treeW = Math.max(minW, Math.round(p.width * w));
-  const treeH = Math.max(minH, Math.round(p.height * h));
+  const minH = Math.max(80, Math.round(h * 0.12));
+  let treeW = Math.max(minW, Math.round(p.width * w));
+  let treeH = Math.max(minH, Math.round(p.height * h));
 
   // p.x = center, p.y = bottom/ground level
-  const left = Math.max(0, Math.min(w - treeW, Math.round(p.x * w - treeW / 2)));
-  const top = Math.max(0, Math.min(h - treeH, Math.round(p.y * h - treeH)));
+  // CRITICAL: The mask must NOT extend above the ground area.
+  // In most garden photos, buildings occupy y=0 to ~0.55, ground is y=0.55+.
+  // If the mask goes above y=0.50, it overlaps the building and the model
+  // refuses to generate anything there.
+  const groundTop = Math.round(h * 0.50); // nothing above 50% of image
+  let top = Math.max(0, Math.round(p.y * h - treeH));
 
-  // Use rounded rectangle (simpler, more reliable than ellipse)
-  // Add slight feathering at edges via rx/ry
-  const rx = Math.round(treeW * 0.15);
-  const ry = Math.round(treeH * 0.08);
+  // If mask would extend above ground area, shrink it
+  if (top < groundTop) {
+    top = groundTop;
+    treeH = Math.round(p.y * h) - top; // fit between groundTop and ground level
+    if (treeH < minH) treeH = minH;    // enforce minimum
+  }
+
+  const left = Math.max(0, Math.min(w - treeW, Math.round(p.x * w - treeW / 2)));
+
+  // Rounded rectangle mask
+  const rx = Math.round(treeW * 0.12);
+  const ry = Math.round(treeH * 0.06);
 
   const svg = Buffer.from(
     `<svg width="${treeW}" height="${treeH}">` +
@@ -139,7 +151,8 @@ async function generateMask(
     create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
   }).composite([{ input: svg, left, top }]).png().toBuffer();
 
-  console.log(`[Kontext] Mask: image ${w}x${h}, tree region: left=${left} top=${top} ${treeW}x${treeH} (${(treeW*treeH/(w*h)*100).toFixed(1)}% of image)`);
+  const maskBottom = top + treeH;
+  console.log(`[Kontext] Mask: image ${w}x${h}, tree: left=${left} top=${top} ${treeW}x${treeH} bottom=${maskBottom} (${(treeW*treeH/(w*h)*100).toFixed(1)}% area, top@${(top/h*100).toFixed(0)}%)`);
 
   return `data:image/png;base64,${buf.toString('base64')}`;
 }
