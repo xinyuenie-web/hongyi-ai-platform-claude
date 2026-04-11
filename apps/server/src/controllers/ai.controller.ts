@@ -329,11 +329,12 @@ export async function testKontextHandler(_req: Request, res: Response) {
       output_format: 'jpeg',
       strength: 0.85,
       num_inference_steps: 20,
+      sync_mode: true,  // Return image as data URI — no CDN download needed
     });
 
-    let resultImageUrl: string | null = null;
+    let resultData: string | null = null;
 
-    // Try direct fal.run
+    // Try direct fal.run with sync_mode
     try {
       const apiRes = await fetch('https://fal.run/fal-ai/flux-kontext-lora/inpaint', {
         method: 'POST',
@@ -344,45 +345,20 @@ export async function testKontextHandler(_req: Request, res: Response) {
       const apiBody = await apiRes.text();
       if (apiRes.ok) {
         const data = JSON.parse(apiBody);
-        resultImageUrl = data.images?.[0]?.url || null;
-        steps.push({ step: 'kontext-direct', status: 'OK', detail: `URL: ${resultImageUrl?.slice(0, 60)}...`, ms: Date.now() - t4 });
+        const imgUrl = data.images?.[0]?.url || '';
+        const isDataUri = imgUrl.startsWith('data:');
+        const size = isDataUri ? Math.round(imgUrl.length * 0.75) : 0;
+        resultData = imgUrl;
+        steps.push({ step: 'kontext-sync', status: 'OK', detail: `dataURI:${isDataUri} size:~${size}b`, ms: Date.now() - t4 });
       } else {
-        steps.push({ step: 'kontext-direct', status: 'FAIL', detail: `HTTP ${apiRes.status}: ${apiBody.slice(0, 300)}`, ms: Date.now() - t4 });
+        steps.push({ step: 'kontext-sync', status: 'FAIL', detail: `HTTP ${apiRes.status}: ${apiBody.slice(0, 300)}`, ms: Date.now() - t4 });
       }
     } catch (err: any) {
-      steps.push({ step: 'kontext-direct', status: 'FAIL', detail: err.message, ms: Date.now() - t4 });
+      steps.push({ step: 'kontext-sync', status: 'FAIL', detail: err.message, ms: Date.now() - t4 });
     }
 
-    if (!resultImageUrl) {
-      return res.json({ success: false, steps, totalMs: Date.now() - start });
-    }
-
-    // Step 5: Download result
-    const t5 = Date.now();
-    try {
-      const dlRes = await fetch(resultImageUrl, { signal: AbortSignal.timeout(30000) });
-      if (dlRes.ok) {
-        const buf = Buffer.from(await dlRes.arrayBuffer());
-        steps.push({ step: 'download', status: 'OK', detail: `${buf.length} bytes`, ms: Date.now() - t5 });
-      } else {
-        // Try proxy
-        const proxyUrl = process.env.FAL_PROXY_URL;
-        if (proxyUrl) {
-          const urlObj = new URL(resultImageUrl);
-          const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
-          const cdnRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
-          if (cdnRes.ok) {
-            const buf = Buffer.from(await cdnRes.arrayBuffer());
-            steps.push({ step: 'download-proxy', status: 'OK', detail: `${buf.length} bytes`, ms: Date.now() - t5 });
-          } else {
-            steps.push({ step: 'download', status: 'FAIL', detail: `direct ${dlRes.status}, proxy ${cdnRes.status}` });
-          }
-        } else {
-          steps.push({ step: 'download', status: 'FAIL', detail: `HTTP ${dlRes.status}` });
-        }
-      }
-    } catch (err: any) {
-      steps.push({ step: 'download', status: 'FAIL', detail: err.message, ms: Date.now() - t5 });
+    if (resultData) {
+      steps.push({ step: 'result', status: 'OK', detail: 'No CDN download needed (sync_mode)' });
     }
 
     const allOk = steps.every((s) => s.status === 'OK');
