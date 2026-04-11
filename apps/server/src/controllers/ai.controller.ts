@@ -745,23 +745,16 @@ export async function generatePlanHandler(req: Request, res: Response) {
         console.log(`[GeneratePlan] Kontext items:`, kontextItems.map(i => `${i.treeName} img:${i.treeImageUrl}`));
         console.log(`[GeneratePlan] Garden photo path: ${gardenPhoto.path}`);
         try {
-          // Ground treatment: keyword detection (reliable) > Doubao Vision (optional)
-          const visionGround = response.aiAnalysis?.groundTreatment;
-          const groundSource = keywordGroundTreatment || (visionGround ? {
-            prompt: visionGround.prompt,
-            groundRegion: visionGround.groundRegion,
-          } : null);
-          if (groundSource) {
-            console.log(`[GeneratePlan] Ground treatment will be applied: ${groundSource.prompt.slice(0, 60)}...`);
+          // Ground treatment: DISABLED — Kontext Lora model is designed for object insertion,
+          // not texture replacement. Using it for ground changes (grass/stone) with a 40% mask
+          // destroys the scene (building changes, unrealistic textures). Need a different model
+          // or approach for ground treatment in the future.
+          if (keywordGroundTreatment) {
+            console.log(`[GeneratePlan] Ground treatment detected but SKIPPED (feature disabled): ${keywordGroundTreatment.prompt.slice(0, 60)}...`);
           }
           const kontextResult = await kontextAddTrees({
             gardenPhotoPath: gardenPhoto.path,
             trees: kontextItems,
-            groundTreatment: groundSource ? {
-              prompt: groundSource.prompt,
-              groundRegion: groundSource.groundRegion,
-              treePlacements: kontextItems.map(t => ({ x: t.x, y: t.y, width: t.width, height: t.height })),
-            } : undefined,
           });
           response.generatedImage = kontextResult.imageUrl;
           console.log('[GeneratePlan] Kontext inpaint succeeded!');
