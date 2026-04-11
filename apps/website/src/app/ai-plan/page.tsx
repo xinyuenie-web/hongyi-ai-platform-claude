@@ -473,6 +473,63 @@ export default function AIPlanPage() {
           {/* Result Display */}
           {step === 4 && result && (
             <div className="space-y-6">
+              {/* Customer Input Summary: Garden Photo + Selected Trees */}
+              <div className="rounded-xl border-2 border-brand-navy/20 bg-gray-50 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Camera className="h-5 w-5 text-brand-navy" />
+                  <h3 className="text-sm font-bold text-brand-navy">您的输入</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {/* Uploaded Garden Photo */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-medium text-gray-500">上传的庭院照片</p>
+                    {gardenPreview && (
+                      <div className="relative aspect-[4/3] overflow-hidden rounded-lg border bg-white">
+                        <Image
+                          src={gardenPreview}
+                          alt="您上传的庭院照片"
+                          fill
+                          className="object-cover"
+                          sizes="(max-width: 640px) 100vw, 50vw"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {/* Selected Trees */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-medium text-gray-500">
+                      选择的真树（{form.treeIds.length} 棵）
+                    </p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {trees
+                        .filter((t) => form.treeIds.includes(t.treeId))
+                        .map((tree) => (
+                          <div key={tree.treeId} className="overflow-hidden rounded-lg border bg-white">
+                            <div className="relative aspect-square">
+                              {tree.coverImage ? (
+                                <Image
+                                  src={resolveImage(tree.coverImage)}
+                                  alt={tree.name}
+                                  fill
+                                  className="object-cover"
+                                  sizes="80px"
+                                />
+                              ) : (
+                                <div className="flex h-full items-center justify-center bg-gray-100">
+                                  <TreePine className="h-4 w-4 text-gray-300" />
+                                </div>
+                              )}
+                            </div>
+                            <p className="truncate px-1 py-0.5 text-center text-[10px] font-medium text-gray-700">
+                              {tree.name}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Generated Image */}
               {result.generatedImage && (
                 <div>
