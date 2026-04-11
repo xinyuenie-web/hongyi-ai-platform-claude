@@ -337,6 +337,70 @@ function getTreeVisualDescription(treeName: string): string {
 }
 
 /**
+ * Generate a textured reference image for ground treatment.
+ * The Kontext Lora model REQUIRES reference_image_url — without it the API fails.
+ * Instead of a solid color (which produces no change), we generate a textured
+ * pattern with SVG-based color variation that gives the model real texture info.
+ */
+async function generateGroundReference(prompt: string): Promise<string> {
+  const sharp = (await import('sharp')).default;
+
+  // Base color and texture dots based on ground type
+  let bg = { r: 34, g: 120, b: 28 }; // grass green
+  let dotColors = [
+    { r: 20, g: 100, b: 15 },
+    { r: 50, g: 140, b: 35 },
+    { r: 40, g: 160, b: 45 },
+    { r: 30, g: 110, b: 20 },
+  ];
+
+  if (prompt.includes('stone') || prompt.includes('paving')) {
+    bg = { r: 140, g: 140, b: 135 };
+    dotColors = [
+      { r: 160, g: 160, b: 155 },
+      { r: 120, g: 120, b: 115 },
+      { r: 180, g: 175, b: 170 },
+      { r: 100, g: 100, b: 95 },
+    ];
+  } else if (prompt.includes('gravel') || prompt.includes('pebble')) {
+    bg = { r: 190, g: 180, b: 165 };
+    dotColors = [
+      { r: 170, g: 160, b: 145 },
+      { r: 210, g: 200, b: 185 },
+      { r: 150, g: 145, b: 130 },
+      { r: 200, g: 190, b: 175 },
+    ];
+  }
+
+  // Generate SVG with many small colored circles to create texture
+  const size = 256;
+  const dots: string[] = [];
+  // Use deterministic pseudo-random for reproducibility
+  let seed = 42;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+  for (let i = 0; i < 800; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 1 + rand() * 4;
+    const c = dotColors[Math.floor(rand() * dotColors.length)];
+    const opacity = 0.4 + rand() * 0.6;
+    dots.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" fill="rgb(${c.r},${c.g},${c.b})" opacity="${opacity.toFixed(2)}"/>`);
+  }
+
+  const svg = Buffer.from(
+    `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">` +
+    `<rect width="${size}" height="${size}" fill="rgb(${bg.r},${bg.g},${bg.b})"/>` +
+    dots.join('') +
+    `</svg>`,
+  );
+
+  const buf = await sharp(svg).jpeg({ quality: 85 }).toBuffer();
+  console.log(`[Kontext] Ground reference: ${size}x${size} textured (${buf.length}b)`);
+  return `data:image/jpeg;base64,${buf.toString('base64')}`;
+}
+
+/**
  * Generate mask for ground treatment (grass, stone, etc.).
  * White = area to regenerate (ground), Black = preserve (trees, buildings).
  * Excludes tree root areas to avoid overwriting planted trees.
@@ -524,14 +588,15 @@ export async function kontextAddTrees(options: {
         options.groundTreatment.treePlacements,
       );
 
-      // No reference image for ground — text prompt alone works better for textures
-      // (a solid-color reference image confuses the model and produces no change)
+      // Generate textured reference image (Kontext Lora REQUIRES reference_image_url)
+      const groundRef = await generateGroundReference(options.groundTreatment.prompt);
       const groundPrompt = options.groundTreatment.prompt +
         '. Cover the entire ground area completely. Photorealistic outdoor garden photography, natural sunlight, high detail texture.';
 
       const groundResult = await callKontext({
         imageBase64: currentBase64,
         maskBase64: groundMask,
+        refBase64: groundRef,
         prompt: groundPrompt,
         debugLabel: 'ground',
         strength: 0.95,
