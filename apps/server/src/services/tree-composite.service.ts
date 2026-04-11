@@ -122,34 +122,35 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
 
   for (const ep of endpoints) {
     try {
-      console.log(`[TreeComposite] BiRefNet via ${ep.name}...`);
+      console.log(`[TreeComposite] BiRefNet via ${ep.name} (${ep.url.slice(0, 60)})...`);
       const res = await fetch(ep.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Key ${falKey}`,
         },
-        body: JSON.stringify({ image_url: base64, model: 'General Use (Heavy)' }),
-        signal: AbortSignal.timeout(60000),
+        body: JSON.stringify({ image_url: base64 }),
+        signal: AbortSignal.timeout(90000),
       });
 
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
-        console.warn(`[TreeComposite] BiRefNet ${ep.name} error ${res.status}: ${errBody.slice(0, 200)}`);
+        console.warn(`[TreeComposite] BiRefNet ${ep.name} error ${res.status}: ${errBody.slice(0, 300)}`);
         continue;
       }
 
       const data: any = await res.json();
+      console.log(`[TreeComposite] BiRefNet ${ep.name} response keys: ${Object.keys(data).join(',')}`);
       const resultUrl = data.image?.url;
       if (!resultUrl) {
-        console.warn(`[TreeComposite] BiRefNet ${ep.name}: no image in response`);
+        console.warn(`[TreeComposite] BiRefNet ${ep.name}: no image.url in response. data.image=${JSON.stringify(data.image)?.slice(0, 200)}`);
         continue;
       }
 
-      console.log(`[TreeComposite] BiRefNet succeeded via ${ep.name}, downloading...`);
+      console.log(`[TreeComposite] BiRefNet succeeded via ${ep.name}, downloading result...`);
       return await downloadFalResult(resultUrl);
     } catch (err: any) {
-      console.warn(`[TreeComposite] BiRefNet ${ep.name} failed: ${err.message}`);
+      console.warn(`[TreeComposite] BiRefNet ${ep.name} failed: ${err.message} ${err.cause || ''}`);
     }
   }
 
