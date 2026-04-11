@@ -520,10 +520,11 @@ export async function generatePlanHandler(req: Request, res: Response) {
         treePlacements.push({
           treeName: t.name,
           coverImage: t.coverImage || '',
-          x: 0.05 + (0.85 / 6) * (idx + 1) - 0.06,
-          y: 0.40,
-          width: 0.12,
-          height: 0.30,
+          // x = center of tree, y = ground level (bottom of tree)
+          x: 0.05 + (0.85 / 6) * (idx + 1),
+          y: 0.82,   // ground level — most garden photos have ground at ~80% height
+          width: 0.15,
+          height: 0.35,
         });
       }
     }
@@ -541,10 +542,11 @@ export async function generatePlanHandler(req: Request, res: Response) {
       treePlacements = treesToPlace.map((t, i) => ({
         treeName: t.name,
         coverImage: t.coverImage || '',
-        x: 0.05 + (0.85 / (count + 1)) * (i + 1) - 0.06,
-        y: 0.40,
-        width: 0.12,
-        height: 0.30,
+        // x = center of tree, y = ground level (bottom of tree)
+        x: 0.1 + (0.8 / (count + 1)) * (i + 1),
+        y: 0.82,
+        width: 0.15,
+        height: 0.35,
       }));
     }
 

@@ -4,8 +4,8 @@ import path from 'path';
 export interface TreeCompositeItem {
   treeName: string;
   imageUrl: string; // tree cover image URL or path (e.g. /images/trees/HY0001.jpg)
-  x: number;        // 0-1 ratio, left edge of placement area
-  y: number;        // 0-1 ratio, top edge of placement area
+  x: number;        // 0-1 ratio, CENTER x of placement area
+  y: number;        // 0-1 ratio, BOTTOM edge of tree (ground level)
   width: number;    // 0-1 ratio
   height: number;   // 0-1 ratio
 }
@@ -23,18 +23,28 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
     // Try local filesystem first (works in dev)
     const localPath = path.join(process.cwd(), '..', 'website', 'public', imageUrl);
     if (fs.existsSync(localPath)) {
-      console.log(`[TreeComposite] Reading tree image from local: ${localPath}`);
+      console.log(`[TreeComposite] Reading from local: ${localPath}`);
       return fs.readFileSync(localPath);
     }
-    // In Docker, fetch from website service
-    const dockerUrl = `http://website:3000${imageUrl}`;
-    console.log(`[TreeComposite] Fetching tree image from Docker: ${dockerUrl}`);
-    const res = await fetch(dockerUrl, { signal: AbortSignal.timeout(10000) });
-    if (res.ok) return Buffer.from(await res.arrayBuffer());
-    // Fallback: try nginx
-    const nginxUrl = `http://nginx:80${imageUrl}`;
-    const res2 = await fetch(nginxUrl, { signal: AbortSignal.timeout(10000) }).catch(() => null);
-    if (res2?.ok) return Buffer.from(await res2.arrayBuffer());
+    // In Docker, fetch from website service or nginx
+    const urls = [
+      `http://website:3000${imageUrl}`,
+      `http://nginx:80${imageUrl}`,
+    ];
+    for (const url of urls) {
+      try {
+        console.log(`[TreeComposite] Fetching: ${url}`);
+        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          const buf = Buffer.from(await res.arrayBuffer());
+          console.log(`[TreeComposite] Fetched ${buf.length} bytes from ${url}`);
+          return buf;
+        }
+        console.warn(`[TreeComposite] HTTP ${res.status} from ${url}`);
+      } catch (err: any) {
+        console.warn(`[TreeComposite] Fetch failed: ${url} - ${err.message}`);
+      }
+    }
     throw new Error(`Cannot fetch tree image: ${imageUrl}`);
   }
 
@@ -42,7 +52,7 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
   if (imageUrl.startsWith('/uploads/')) {
     const localPath = path.join(process.cwd(), imageUrl);
     if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
-    throw new Error(`Upload file not found: ${imageUrl}`);
+    throw new Error(`Upload not found: ${imageUrl}`);
   }
 
   // Full URL
@@ -53,62 +63,6 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
   }
 
   throw new Error(`Unknown image URL format: ${imageUrl}`);
-}
-
-/**
- * Remove background from a tree image using fal.ai BiRefNet.
- * Returns a PNG buffer with transparent background.
- */
-async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
-  const falKey = process.env.FAL_KEY;
-  if (!falKey) throw new Error('FAL_KEY not configured');
-
-  const base64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
-  const proxyUrl = process.env.FAL_PROXY_URL;
-
-  // Try direct fal.run first (works from China for API calls)
-  const endpoints = [
-    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
-  ];
-  if (proxyUrl) {
-    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/fal-ai/birefnet` });
-  }
-
-  for (const ep of endpoints) {
-    try {
-      console.log(`[TreeComposite] BiRefNet via ${ep.name}...`);
-      const res = await fetch(ep.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Key ${falKey}`,
-        },
-        body: JSON.stringify({ image_url: base64 }),
-        signal: AbortSignal.timeout(60000),
-      });
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        console.warn(`[TreeComposite] BiRefNet ${ep.name} error ${res.status}: ${errBody.slice(0, 200)}`);
-        continue;
-      }
-
-      const data: any = await res.json();
-      const resultUrl = data.image?.url;
-      if (!resultUrl) {
-        console.warn(`[TreeComposite] BiRefNet ${ep.name}: no image in response`);
-        continue;
-      }
-
-      console.log(`[TreeComposite] BiRefNet succeeded, downloading result...`);
-      // Download the result PNG (transparent background)
-      return await downloadFalResult(resultUrl);
-    } catch (err: any) {
-      console.warn(`[TreeComposite] BiRefNet ${ep.name} failed: ${err.message}`);
-    }
-  }
-
-  throw new Error('Background removal failed on all endpoints');
 }
 
 /**
@@ -145,7 +99,105 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
     }
   }
 
-  throw new Error(`Failed to download fal result: ${imageUrl.slice(0, 80)}`);
+  throw new Error(`Failed to download: ${imageUrl.slice(0, 80)}`);
+}
+
+/**
+ * Remove background from a tree image using fal.ai BiRefNet.
+ * Returns a PNG buffer with transparent background.
+ */
+async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) throw new Error('FAL_KEY not configured');
+
+  const base64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+  const proxyUrl = process.env.FAL_PROXY_URL;
+
+  const endpoints = [
+    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
+  ];
+  if (proxyUrl) {
+    endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/fal-ai/birefnet` });
+  }
+
+  for (const ep of endpoints) {
+    try {
+      console.log(`[TreeComposite] BiRefNet via ${ep.name}...`);
+      const res = await fetch(ep.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Key ${falKey}`,
+        },
+        body: JSON.stringify({ image_url: base64 }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[TreeComposite] BiRefNet ${ep.name} error ${res.status}: ${errBody.slice(0, 200)}`);
+        continue;
+      }
+
+      const data: any = await res.json();
+      const resultUrl = data.image?.url;
+      if (!resultUrl) {
+        console.warn(`[TreeComposite] BiRefNet ${ep.name}: no image in response`);
+        continue;
+      }
+
+      console.log(`[TreeComposite] BiRefNet succeeded via ${ep.name}, downloading...`);
+      return await downloadFalResult(resultUrl);
+    } catch (err: any) {
+      console.warn(`[TreeComposite] BiRefNet ${ep.name} failed: ${err.message}`);
+    }
+  }
+
+  throw new Error('Background removal failed on all endpoints');
+}
+
+/**
+ * Create a soft-edge version of an image (fallback when BiRefNet fails).
+ * Adds a feathered elliptical mask so the tree blends into the garden.
+ */
+async function createSoftEdgeOverlay(
+  sharp: any,
+  imageBuffer: Buffer,
+  targetW: number,
+  targetH: number,
+): Promise<Buffer> {
+  // Resize image
+  const resized = await sharp(imageBuffer)
+    .resize(targetW, targetH, { fit: 'cover' })
+    .png()
+    .toBuffer();
+
+  // Create an elliptical alpha mask with feathered edges
+  const cx = Math.round(targetW / 2);
+  const cy = Math.round(targetH / 2);
+  const rx = Math.round(targetW * 0.45);
+  const ry = Math.round(targetH * 0.48);
+  // Use radial gradient for soft edges via SVG
+  const maskSvg = Buffer.from(
+    `<svg width="${targetW}" height="${targetH}">
+      <defs>
+        <radialGradient id="g" cx="50%" cy="50%" rx="50%" ry="50%">
+          <stop offset="60%" stop-color="white" stop-opacity="1"/>
+          <stop offset="100%" stop-color="white" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="url(#g)"/>
+    </svg>`,
+  );
+
+  // Apply the mask as alpha channel
+  const mask = await sharp(maskSvg).resize(targetW, targetH).greyscale().png().toBuffer();
+
+  return sharp(resized)
+    .ensureAlpha()
+    .composite([{ input: mask, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
 }
 
 /**
@@ -153,13 +205,17 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
  *
  * Flow:
  * 1. Read garden photo, resize if too large
- * 2. For each tree (parallel):
+ * 2. For each tree (SEQUENTIAL to avoid rate limiting):
  *    a. Read tree's cover image
- *    b. Remove background via fal.ai BiRefNet → transparent PNG
- *    c. Resize to fit placement area
- * 3. Composite all cutout trees onto garden photo with sharp
- * 4. Add subtle drop shadows for realism
- * 5. Save result
+ *    b. Try BiRefNet for background removal → transparent PNG
+ *    c. If BiRefNet fails, create soft-edge overlay as fallback
+ *    d. Resize to fit placement area
+ * 3. Composite all tree overlays onto garden photo
+ * 4. Save result
+ *
+ * Coordinate convention:
+ * - x: center of tree (0-1), y: bottom of tree / ground level (0-1)
+ * - width/height: tree dimensions (0-1 ratio of image size)
  */
 export async function compositeTreesOnGarden(options: {
   gardenPhotoPath: string;
@@ -192,54 +248,53 @@ export async function compositeTreesOnGarden(options: {
     baseH = rawH;
   }
 
-  console.log(`[TreeComposite] Processing ${options.trees.length} trees...`);
+  console.log(`[TreeComposite] Processing ${options.trees.length} trees on ${baseW}x${baseH} garden...`);
 
-  // 2. Process all trees in parallel: read → remove bg → resize
-  const treeResults = await Promise.allSettled(
-    options.trees.map(async (tree, idx) => {
-      console.log(`[TreeComposite] Tree ${idx + 1}/${options.trees.length}: ${tree.treeName} (${tree.imageUrl})`);
+  // 2. Process trees SEQUENTIALLY (avoids BiRefNet rate limiting)
+  const overlays: Array<{ input: Buffer; left: number; top: number }> = [];
 
+  for (let idx = 0; idx < options.trees.length; idx++) {
+    const tree = options.trees[idx];
+    console.log(`[TreeComposite] Tree ${idx + 1}/${options.trees.length}: ${tree.treeName} (${tree.imageUrl})`);
+
+    try {
       // Read tree image
       const treeImgBuf = await readTreeImage(tree.imageUrl);
       console.log(`[TreeComposite] Tree ${idx + 1} image: ${treeImgBuf.length} bytes`);
 
-      // Remove background → transparent PNG
-      const cutoutBuf = await removeBackground(treeImgBuf);
-      console.log(`[TreeComposite] Tree ${idx + 1} cutout: ${cutoutBuf.length} bytes`);
+      // Calculate target dimensions
+      const targetW = Math.max(40, Math.round(tree.width * baseW));
+      const targetH = Math.max(60, Math.round(tree.height * baseH));
 
-      // Calculate target dimensions and position
-      const targetW = Math.max(20, Math.round(tree.width * baseW));
-      const targetH = Math.max(30, Math.round(tree.height * baseH));
-      const targetX = Math.max(0, Math.min(baseW - targetW, Math.round(tree.x * baseW)));
-      const targetY = Math.max(0, Math.min(baseH - targetH, Math.round(tree.y * baseH)));
+      // Position: x is center of tree, y is bottom of tree (ground level)
+      const targetX = Math.max(0, Math.min(baseW - targetW, Math.round(tree.x * baseW - targetW / 2)));
+      const targetY = Math.max(0, Math.min(baseH - targetH, Math.round(tree.y * baseH - targetH)));
 
-      // Resize cutout to fit placement area (contain = preserve aspect ratio)
-      const resized = await sharp(cutoutBuf)
-        .resize(targetW, targetH, {
-          fit: 'contain',
-          background: { r: 0, g: 0, b: 0, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
+      let overlayBuf: Buffer;
 
-      console.log(`[TreeComposite] Tree ${idx + 1} resized to ${targetW}x${targetH} at (${targetX},${targetY})`);
+      // Try BiRefNet background removal
+      try {
+        const cutoutBuf = await removeBackground(treeImgBuf);
+        console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
 
-      return {
-        input: resized,
-        left: targetX,
-        top: targetY,
-        treeName: tree.treeName,
-      };
-    }),
-  );
+        // Resize cutout to target dimensions
+        overlayBuf = await sharp(cutoutBuf)
+          .resize(targetW, targetH, {
+            fit: 'contain',
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          })
+          .png()
+          .toBuffer();
+      } catch (bgErr: any) {
+        // Fallback: soft-edge overlay (still shows the tree, just with blended edges)
+        console.warn(`[TreeComposite] Tree ${idx + 1} BiRefNet failed: ${bgErr.message}, using soft-edge fallback`);
+        overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
+      }
 
-  // Collect successful results
-  const overlays: Array<{ input: Buffer; left: number; top: number }> = [];
-  for (const result of treeResults) {
-    if (result.status === 'fulfilled') {
-      overlays.push(result.value);
-    } else {
-      console.error(`[TreeComposite] Tree processing failed:`, result.reason?.message || result.reason);
+      console.log(`[TreeComposite] Tree ${idx + 1} overlay: ${targetW}x${targetH} at (${targetX},${targetY})`);
+      overlays.push({ input: overlayBuf, left: targetX, top: targetY });
+    } catch (err: any) {
+      console.error(`[TreeComposite] Tree ${idx + 1} (${tree.treeName}) FAILED entirely: ${err.message}`);
     }
   }
 
@@ -249,7 +304,7 @@ export async function compositeTreesOnGarden(options: {
 
   console.log(`[TreeComposite] Compositing ${overlays.length} trees onto garden...`);
 
-  // 3. Composite all tree cutouts onto garden photo
+  // 3. Composite all tree overlays onto garden photo
   const result = await sharp(baseBuffer)
     .composite(overlays)
     .jpeg({ quality: 90 })
@@ -260,7 +315,7 @@ export async function compositeTreesOnGarden(options: {
   fs.mkdirSync(outputDir, { recursive: true });
   const filename = `ai-garden-${Date.now()}.jpg`;
   fs.writeFileSync(path.join(outputDir, filename), result);
-  console.log(`[TreeComposite] Saved: ${filename} (${result.length} bytes)`);
+  console.log(`[TreeComposite] Saved: ${filename} (${result.length} bytes, ${overlays.length} trees)`);
 
   return { imageUrl: `/api/v1/ai/image/${filename}` };
 }
