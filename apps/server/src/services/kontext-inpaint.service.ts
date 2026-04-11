@@ -383,7 +383,7 @@ export async function kontextAddTrees(options: {
         const refBuf = Buffer.from(refData, 'base64');
         const refMeta = await sharp(refBuf).metadata();
         if (refMeta.width && refMeta.height) {
-          const cropH = Math.round(refMeta.height * 0.80); // keep top 80%
+          const cropH = Math.round(refMeta.height * 0.70); // keep top 70%, fully remove pot/container
           const cropped = await sharp(refBuf)
             .extract({ left: 0, top: 0, width: refMeta.width, height: cropH })
             .jpeg({ quality: 85 })
