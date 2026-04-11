@@ -189,7 +189,7 @@ async function callKontext(params: {
     num_images: 1,
     output_format: 'jpeg',
     strength: 0.95,
-    guidance_scale: 10,     // HIGH: force AI to closely match reference image colors and shape
+    guidance_scale: 5.5,    // Balanced: higher than default(2.5) for better reference matching, but not so high it kills generation
     num_inference_steps: 28,
     sync_mode: true,  // KEY: return image data in response, no CDN download
   };
@@ -341,8 +341,8 @@ export async function kontextAddTrees(options: {
       const maskBase64 = await generateMask(currentW, currentH, tree);
       console.log(`[Kontext]   Mask generated: ${maskBase64.length} chars`);
 
-      // Prompt strongly emphasizes matching reference image exactly
-      const prompt = `Place the EXACT same tree from the reference image into this garden scene. Copy the precise colors, leaf shapes, trunk texture, and overall silhouette of the reference tree EXACTLY as shown. The tree must be an identical match to the reference photo - same species, same color tones, same branch structure, same foliage density. Plant it naturally in the ground with realistic shadows. Photorealistic outdoor photography.`;
+      // Prompt: clear instruction + emphasize matching reference image
+      const prompt = `Add the exact tree shown in the reference image into this garden. Keep the same colors, shape, and foliage style as the reference. The tree is a ${tree.treeName} ornamental tree planted naturally in the ground. Realistic photography, natural outdoor lighting, ground shadows. The tree matches the reference image precisely in color and form.`;
 
       const resultBase64 = await callKontext({
         imageBase64: currentBase64,
