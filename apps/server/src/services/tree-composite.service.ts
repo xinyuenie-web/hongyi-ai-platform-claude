@@ -191,7 +191,7 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
           'Authorization': `Key ${falKey}`,
         },
         body: JSON.stringify({ image_url: base64 }),
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!res.ok) {

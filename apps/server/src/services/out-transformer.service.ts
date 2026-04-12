@@ -3,7 +3,7 @@
  *
  * 策略：
  * 1. 树木合成策略（BiRefNet + Sharp）— 树木 = 产品照片100%匹配
- * 2. 地面处理策略（Flux Fill）— 铺草皮/石板/鹅卵石
+ * 2. 地面处理策略（Sharp叠加）— 铺草皮/石板/鹅卵石，即时完成
  * 3. 混合策略 — 先合成树，再处理地面
  */
 import fs from 'fs';
@@ -25,221 +25,143 @@ export interface OutResult {
 }
 
 /**
- * Generate a ground mask for Flux Fill inpainting.
- * White = area to regenerate (ground), Black = preserve (trees, buildings, sky).
- * Excludes tree placement areas to avoid overwriting composited trees.
+ * Apply ground treatment using Sharp overlay (instant, no API call).
+ * Creates a semi-transparent colored texture overlay on the ground region,
+ * avoiding tree placement areas.
  */
-async function generateGroundMask(
-  imageWidth: number,
-  imageHeight: number,
-  groundRegion: { yStart: number; yEnd: number },
-  treePlacements: Array<{ x: number; y: number; width: number; height: number }>,
-): Promise<Buffer> {
-  const sharp = (await import('sharp')).default;
-
-  const yStart = Math.round(groundRegion.yStart * imageHeight);
-  const yEnd = Math.round(groundRegion.yEnd * imageHeight);
-  const groundH = yEnd - yStart;
-
-  if (groundH <= 0) throw new Error('Invalid ground region');
-
-  // White rectangle for the ground area
-  const groundSvg = Buffer.from(
-    `<svg width="${imageWidth}" height="${groundH}"><rect width="${imageWidth}" height="${groundH}" fill="white"/></svg>`,
-  );
-
-  // Create black rectangles for tree base areas (preserve trees)
-  const treeExclusions = treePlacements.map(t => {
-    const treeLeft = Math.max(0, Math.round((t.x - t.width / 2) * imageWidth));
-    const treeRight = Math.min(imageWidth, Math.round((t.x + t.width / 2) * imageWidth));
-    const treeBottom = Math.round(t.y * imageHeight);
-    const protectTop = Math.max(yStart, treeBottom - Math.round(t.height * imageHeight));
-    const protectW = treeRight - treeLeft;
-    const protectH = treeBottom - protectTop;
-    if (protectW <= 0 || protectH <= 0) return null;
-    return {
-      input: Buffer.from(
-        `<svg width="${protectW}" height="${protectH}"><rect width="${protectW}" height="${protectH}" fill="black"/></svg>`,
-      ),
-      left: treeLeft,
-      top: protectTop,
-    };
-  }).filter((e): e is NonNullable<typeof e> => e !== null && e.top >= yStart);
-
-  // Start with black canvas, add white ground region
-  let maskBuf = await sharp({
-    create: { width: imageWidth, height: imageHeight, channels: 3, background: { r: 0, g: 0, b: 0 } },
-  }).composite([{ input: groundSvg, left: 0, top: yStart }]).png().toBuffer();
-
-  // Add black tree exclusion zones
-  if (treeExclusions.length > 0) {
-    maskBuf = await sharp(maskBuf)
-      .composite(treeExclusions.map(e => ({
-        input: e.input,
-        left: e.left,
-        top: e.top,
-      })))
-      .png()
-      .toBuffer();
-  }
-
-  console.log(`[ouT] Ground mask: ${imageWidth}x${imageHeight}, region y=${yStart}-${yEnd}, ${treeExclusions.length} tree exclusions`);
-  return maskBuf;
-}
-
-/**
- * Call Flux Fill API for ground treatment inpainting.
- * Reuses the same fal.ai infrastructure as flux-fill.service.ts.
- */
-async function callFluxFillForGround(
-  imageBuffer: Buffer,
-  maskBuffer: Buffer,
-  prompt: string,
-): Promise<Buffer> {
-  const falKey = process.env.FAL_KEY;
-  if (!falKey) throw new Error('FAL_KEY not set');
-
-  const proxyUrl = process.env.FAL_PROXY_URL;
-  const modelId = 'fal-ai/flux-pro/v1/fill';
-
-  const imageBase64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
-  const maskBase64 = `data:image/png;base64,${maskBuffer.toString('base64')}`;
-
-  const payload = JSON.stringify({
-    prompt,
-    image_url: imageBase64,
-    mask_url: maskBase64,
-    num_images: 1,
-    output_format: 'jpeg',
-  });
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Key ${falKey}`,
-  };
-
-  // Try direct first, then proxy
-  const endpoints = [
-    { name: 'direct', url: `https://fal.run/${modelId}` },
-    ...(proxyUrl ? [{ name: 'proxy', url: `${proxyUrl}/fal-sync/${modelId}` }] : []),
-  ];
-
-  for (const ep of endpoints) {
-    try {
-      console.log(`[ouT] Flux Fill ground via ${ep.name}...`);
-      const res = await fetch(ep.url, {
-        method: 'POST',
-        headers,
-        body: payload,
-        signal: AbortSignal.timeout(120000), // 2 min for ground treatment
-      });
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        console.warn(`[ouT] Flux Fill ${ep.name} error ${res.status}: ${errBody.slice(0, 200)}`);
-        continue;
-      }
-
-      const data: any = await res.json();
-      const imageUrl = data.images?.[0]?.url;
-      if (!imageUrl) continue;
-
-      console.log(`[ouT] Flux Fill ground succeeded via ${ep.name}, downloading...`);
-
-      // Download result
-      try {
-        const dlRes = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
-        if (dlRes.ok) return Buffer.from(await dlRes.arrayBuffer());
-      } catch {}
-
-      // Try proxy download
-      if (proxyUrl) {
-        try {
-          const urlObj = new URL(imageUrl);
-          const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
-          const dlRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
-          if (dlRes.ok) return Buffer.from(await dlRes.arrayBuffer());
-        } catch {}
-      }
-    } catch (err: any) {
-      console.warn(`[ouT] Flux Fill ${ep.name} failed: ${err.message}`);
-    }
-  }
-
-  throw new Error('Flux Fill ground treatment failed on all endpoints');
-}
-
-/**
- * Apply ground treatment to an already-composited image.
- * Generates a mask for the ground region, then uses Flux Fill to inpaint.
- */
-async function applyGroundTreatment(
+async function applyGroundTreatmentSharp(
   compositeImagePath: string,
   groundTreatment: NonNullable<DesignPlan['groundTreatment']>,
   treePlacements: Array<{ x: number; y: number; width: number; height: number }>,
 ): Promise<string> {
   const sharp = (await import('sharp')).default;
 
-  // Read the composited image
   const imgBuf = fs.readFileSync(compositeImagePath);
   const meta = await sharp(imgBuf).metadata();
   const w = meta.width!;
   const h = meta.height!;
 
-  // Resize to max 1024px for Flux Fill API payload
-  const MAX_DIM = 1024;
-  let processBuffer: Buffer;
-  let processW: number;
-  let processH: number;
+  const yStart = Math.round(groundTreatment.groundRegion.yStart * h);
+  const yEnd = Math.round(groundTreatment.groundRegion.yEnd * h);
+  const groundH = yEnd - yStart;
 
-  if (w > MAX_DIM || h > MAX_DIM) {
-    const scale = MAX_DIM / Math.max(w, h);
-    processW = Math.round(w * scale);
-    processH = Math.round(h * scale);
-    processBuffer = await sharp(imgBuf).resize(processW, processH).jpeg({ quality: 85 }).toBuffer();
-  } else {
-    processBuffer = await sharp(imgBuf).jpeg({ quality: 85 }).toBuffer();
-    processW = w;
-    processH = h;
+  if (groundH <= 10) {
+    console.warn('[ouT] Ground region too small, skipping');
+    throw new Error('Ground region too small');
   }
 
-  // Generate ground mask
-  const maskBuf = await generateGroundMask(processW, processH, groundTreatment.groundRegion, treePlacements);
+  // Choose color scheme based on type
+  let baseColor: string;
+  let gradientStops: string;
+  let opacity: number;
 
-  // Save mask for debugging
-  const outputDir = path.join(process.cwd(), 'uploads', 'ai-generated');
-  const maskFile = `ground-mask-${Date.now()}.png`;
-  fs.writeFileSync(path.join(outputDir, maskFile), maskBuf);
+  switch (groundTreatment.type) {
+    case 'grass':
+      baseColor = 'rgb(45,140,35)';
+      gradientStops = `
+        <stop offset="0%" stop-color="rgb(55,160,40)" stop-opacity="0.55"/>
+        <stop offset="30%" stop-color="rgb(40,130,30)" stop-opacity="0.50"/>
+        <stop offset="70%" stop-color="rgb(35,120,25)" stop-opacity="0.45"/>
+        <stop offset="100%" stop-color="rgb(30,100,20)" stop-opacity="0.35"/>`;
+      opacity = 0.5;
+      break;
+    case 'stone':
+      baseColor = 'rgb(150,145,140)';
+      gradientStops = `
+        <stop offset="0%" stop-color="rgb(160,155,150)" stop-opacity="0.50"/>
+        <stop offset="50%" stop-color="rgb(140,135,130)" stop-opacity="0.45"/>
+        <stop offset="100%" stop-color="rgb(120,115,110)" stop-opacity="0.35"/>`;
+      opacity = 0.45;
+      break;
+    case 'gravel':
+      baseColor = 'rgb(185,175,160)';
+      gradientStops = `
+        <stop offset="0%" stop-color="rgb(195,185,170)" stop-opacity="0.45"/>
+        <stop offset="50%" stop-color="rgb(175,165,150)" stop-opacity="0.40"/>
+        <stop offset="100%" stop-color="rgb(160,150,135)" stop-opacity="0.30"/>`;
+      opacity = 0.4;
+      break;
+    default:
+      baseColor = 'rgb(45,140,35)';
+      gradientStops = `
+        <stop offset="0%" stop-color="rgb(55,160,40)" stop-opacity="0.50"/>
+        <stop offset="100%" stop-color="rgb(35,120,25)" stop-opacity="0.35"/>`;
+      opacity = 0.45;
+  }
 
-  // Build prompt for ground treatment
-  const prompt = groundTreatment.prompt || buildGroundPrompt(groundTreatment.type);
-  console.log(`[ouT] Ground treatment: type=${groundTreatment.type}, prompt="${prompt.slice(0, 100)}"`);
+  // Build tree exclusion masks (black rectangles where trees are planted)
+  const treeExclusions = treePlacements.map(t => {
+    const treeLeft = Math.max(0, Math.round((t.x - t.width * 0.6) * w));
+    const treeRight = Math.min(w, Math.round((t.x + t.width * 0.6) * w));
+    const treeBottom = Math.round(t.y * h);
+    const treeTop = Math.max(yStart, treeBottom - Math.round(t.height * h));
+    const pw = treeRight - treeLeft;
+    const ph = treeBottom - treeTop;
+    if (pw <= 0 || ph <= 0 || treeTop >= yEnd) return '';
+    // Black rectangle with feathered edges to protect tree areas
+    const rx = Math.round(pw * 0.3);
+    return `<rect x="${treeLeft}" y="${treeTop - yStart}" width="${pw}" height="${ph}" rx="${rx}" fill="black"/>`;
+  }).filter(Boolean).join('\n');
 
-  // Call Flux Fill
-  const resultBuf = await callFluxFillForGround(processBuffer, maskBuf, prompt);
+  // Create ground overlay with gradient + texture dots
+  let seed = 42;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+  // Add texture dots for more natural look
+  const dots: string[] = [];
+  const dotCount = groundTreatment.type === 'gravel' ? 400 : 200;
+  for (let i = 0; i < dotCount; i++) {
+    const dx = rand() * w;
+    const dy = rand() * groundH;
+    const dr = 1 + rand() * (groundTreatment.type === 'gravel' ? 4 : 2);
+    const dOpacity = 0.1 + rand() * 0.2;
+    const shade = groundTreatment.type === 'grass'
+      ? `rgb(${30 + Math.round(rand() * 40)},${100 + Math.round(rand() * 80)},${15 + Math.round(rand() * 30)})`
+      : groundTreatment.type === 'stone'
+        ? `rgb(${120 + Math.round(rand() * 60)},${115 + Math.round(rand() * 60)},${110 + Math.round(rand() * 60)})`
+        : `rgb(${160 + Math.round(rand() * 50)},${150 + Math.round(rand() * 50)},${130 + Math.round(rand() * 50)})`;
+    dots.push(`<circle cx="${dx.toFixed(0)}" cy="${dy.toFixed(0)}" r="${dr.toFixed(1)}" fill="${shade}" opacity="${dOpacity.toFixed(2)}"/>`);
+  }
+
+  // Create the overlay SVG
+  const overlaySvg = Buffer.from(
+    `<svg width="${w}" height="${groundH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="gg" x1="0" y1="0" x2="0" y2="1">
+          ${gradientStops}
+        </linearGradient>
+        <mask id="gm">
+          <rect width="${w}" height="${groundH}" fill="white"/>
+          ${treeExclusions}
+        </mask>
+      </defs>
+      <g mask="url(#gm)">
+        <rect width="${w}" height="${groundH}" fill="url(#gg)"/>
+        ${dots.join('\n')}
+      </g>
+    </svg>`,
+  );
+
+  // Composite the overlay onto the image
+  const overlayBuf = await sharp(overlaySvg).png().toBuffer();
+
+  const resultBuf = await sharp(imgBuf)
+    .composite([{
+      input: overlayBuf,
+      left: 0,
+      top: yStart,
+      blend: 'over',
+    }])
+    .jpeg({ quality: 90 })
+    .toBuffer();
 
   // Save result
+  const outputDir = path.join(process.cwd(), 'uploads', 'ai-generated');
   const filename = `ai-garden-ground-${Date.now()}.jpg`;
   fs.writeFileSync(path.join(outputDir, filename), resultBuf);
-  console.log(`[ouT] Ground treatment saved: ${filename} (${resultBuf.length} bytes)`);
+  console.log(`[ouT] Ground treatment (Sharp): ${filename} (${(resultBuf.length / 1024).toFixed(0)}KB), type=${groundTreatment.type}`);
 
   return `/api/v1/ai/image/${filename}`;
-}
-
-/**
- * Build a default English prompt for ground treatment based on type.
- */
-function buildGroundPrompt(type: string): string {
-  switch (type) {
-    case 'grass':
-      return 'lush green grass lawn covering the ground area, well-maintained natural turf, seamlessly blending with the existing garden scene, photorealistic, natural lighting';
-    case 'stone':
-      return 'natural stone paving covering the ground area, clean flagstone pavement, elegant garden path stones, seamlessly blending with the existing scene, photorealistic';
-    case 'gravel':
-      return 'decorative gravel and pebbles covering the ground area, Japanese zen garden style gravel, smooth river pebbles, seamlessly blending with the existing scene, photorealistic';
-    default:
-      return 'well-maintained garden ground surface, seamlessly blending with the existing scene, photorealistic, natural lighting';
-  }
 }
 
 /**
@@ -247,7 +169,7 @@ function buildGroundPrompt(type: string): string {
  *
  * Flow:
  * 1. Composite trees onto garden photo (BiRefNet + Sharp)
- * 2. If ground treatment requested, apply Flux Fill inpainting on composited result
+ * 2. If ground treatment requested, apply Sharp overlay (instant)
  */
 export async function transform(input: OutInput): Promise<OutResult> {
   const t0 = Date.now();
@@ -282,26 +204,22 @@ export async function transform(input: OutInput): Promise<OutResult> {
   let groundTreated = false;
   let strategy = 'composite';
 
-  // Step 2: Ground treatment via Flux Fill (if requested)
-  if (designPlan.groundTreatment && process.env.FAL_KEY) {
+  // Step 2: Ground treatment via Sharp overlay (instant, <1s)
+  if (designPlan.groundTreatment) {
     try {
       console.log(`[ouT] Applying ground treatment: ${designPlan.groundTreatment.type}...`);
 
-      // Resolve the composited image path
       const compositeFilename = compositeResult.imageUrl.replace('/api/v1/ai/image/', '');
       const compositeImagePath = path.join(process.cwd(), 'uploads', 'ai-generated', compositeFilename);
 
       if (!fs.existsSync(compositeImagePath)) {
-        console.warn(`[ouT] Composite image not found at ${compositeImagePath}, skipping ground treatment`);
+        console.warn(`[ouT] Composite image not found at ${compositeImagePath}`);
       } else {
         const treePlacementsForMask = compositeItems.map(t => ({
-          x: t.x,
-          y: t.y,
-          width: t.width,
-          height: t.height,
+          x: t.x, y: t.y, width: t.width, height: t.height,
         }));
 
-        finalImageUrl = await applyGroundTreatment(
+        finalImageUrl = await applyGroundTreatmentSharp(
           compositeImagePath,
           designPlan.groundTreatment,
           treePlacementsForMask,
@@ -312,7 +230,6 @@ export async function transform(input: OutInput): Promise<OutResult> {
       }
     } catch (err: any) {
       console.warn(`[ouT] Ground treatment failed (non-fatal): ${err.message}`);
-      // Fall back to tree-only composite — ground treatment failure is non-fatal
     }
   }
 

@@ -42,14 +42,23 @@ const STEPS = [
   { label: '生成方案', icon: Sparkles },
 ];
 
+// 布局偏好选项（互斥单选）
+const LAYOUT_OPTIONS = [
+  { key: '', label: 'AI智能布局', desc: '由AI根据庭院空间自动推荐' },
+  { key: '对称布局', label: '对称布局', desc: '左右对称，庄重大气' },
+  { key: '门口两侧', label: '门口两侧', desc: '树木分列大门左右' },
+  { key: '沿墙分布', label: '沿墙分布', desc: '沿围墙或边界种植' },
+  { key: '均匀分散', label: '均匀分散', desc: '间隔均匀覆盖庭院' },
+  { key: '留车位', label: '留出车位', desc: '中间留空方便停车' },
+  { key: '注重风水', label: '风水布局', desc: '按风水方位推荐种植' },
+];
+
 const QUICK_TAGS = [
   // 庭院基本情况
   '约100平', '约200平', '约300平', '约500平',
   '坐北朝南', '有围墙', '有小孩', '有老人',
   // 地面处理
   '空地铺草皮', '铺青石板路', '铺鹅卵石小径',
-  // 布局偏好
-  '注重风水', '喜欢对称布局', '门前要留车位',
   // 风格预算
   '中式风格', '日式风格', '预算10万', '预算20万',
 ];
@@ -62,6 +71,7 @@ export default function AIPlanPage() {
     styleId: '',
     treeIds: [] as string[],
     message: '',
+    layoutPref: '',
   });
   const [gardenPhoto, setGardenPhoto] = useState<File | null>(null);
   const [gardenPreview, setGardenPreview] = useState<string>('');
@@ -163,8 +173,11 @@ export default function AIPlanPage() {
     setError('');
 
     try {
+      // Merge layoutPref into message for backend processing
+      const fullMessage = [form.layoutPref, form.message].filter(Boolean).join(' ');
       const res = await generateAIPlan({
         ...form,
+        message: fullMessage,
         gardenPhoto,
       });
 
@@ -183,7 +196,7 @@ export default function AIPlanPage() {
   function handleReset() {
     setResult(null);
     setStep(0);
-    setForm({ name: '', phone: '', styleId: '', treeIds: [], message: '' });
+    setForm({ name: '', phone: '', styleId: '', treeIds: [], message: '', layoutPref: '' });
     removePhoto();
     setError('');
   }
@@ -392,13 +405,49 @@ export default function AIPlanPage() {
             </div>
           )}
 
-          {/* Step 3: Description */}
+          {/* Step 3: Description + Layout Preference */}
           {step === 3 && (
             <div>
               <h2 className="mb-2 text-lg font-bold text-brand-navy">描述您的需求</h2>
-              <p className="mb-5 text-sm text-gray-500">
-                告诉AI您的庭院情况和偏好（选填），帮助生成更精准的方案
+              <p className="mb-4 text-sm text-gray-500">
+                选择布局方式和庭院情况，帮助AI生成更精准的方案
               </p>
+
+              {/* Layout Preference Selector */}
+              <div className="mb-5">
+                <label className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+                  <TreePine className="h-4 w-4 text-brand-green" />
+                  树木布局方式
+                </label>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {LAYOUT_OPTIONS.map((opt) => {
+                    const active = form.layoutPref === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setForm({ ...form, layoutPref: opt.key })}
+                        className={`rounded-xl border-2 p-2.5 text-left transition-all ${
+                          active
+                            ? 'border-brand-green bg-brand-green/5 ring-1 ring-brand-green/20'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <p className={`text-xs font-bold ${active ? 'text-brand-green' : 'text-gray-700'}`}>
+                          {opt.label}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-gray-400">{opt.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quick Tags */}
+              <label className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+                <Palette className="h-4 w-4 text-purple-500" />
+                庭院情况与偏好
+              </label>
               <div className="mb-4 flex flex-wrap gap-2">
                 {QUICK_TAGS.map((tag) => {
                   const active = form.message.includes(tag);
@@ -418,12 +467,14 @@ export default function AIPlanPage() {
                   );
                 })}
               </div>
+
+              {/* Free text */}
               <textarea
                 value={form.message}
                 onChange={(e) => setForm({ ...form, message: e.target.value })}
-                rows={5}
+                rows={3}
                 className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:border-brand-navy focus:ring-1 focus:ring-brand-navy"
-                placeholder="例如：庭院面积约200平米，坐北朝南，喜欢中式风格，预算10万左右，希望有风水讲究..."
+                placeholder="其他补充说明（选填）..."
               />
             </div>
           )}
@@ -447,6 +498,12 @@ export default function AIPlanPage() {
                   <span className="text-gray-500">选择树木</span>
                   <span className="font-medium text-gray-800">{form.treeIds.length} 棵</span>
                 </div>
+                {form.layoutPref && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">布局方式</span>
+                    <span className="font-medium text-brand-green">{LAYOUT_OPTIONS.find(o => o.key === form.layoutPref)?.label || form.layoutPref}</span>
+                  </div>
+                )}
                 {form.message && (
                   <div className="border-t pt-2">
                     <span className="text-gray-500">需求描述：</span>
@@ -462,7 +519,14 @@ export default function AIPlanPage() {
                     <Sparkles className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-amber-500" />
                   </div>
                   <p className="text-sm font-medium text-gray-700">AI正在为您设计庭院效果图...</p>
-                  <p className="mt-1 text-xs text-gray-400">预计需要约30秒，请耐心等待</p>
+                  <div className="mx-auto mt-3 max-w-xs space-y-1.5 text-xs text-gray-400">
+                    <p>1. AI分析庭院空间与树木搭配...</p>
+                    <p>2. 智能抠图并合成真树到照片中...</p>
+                    {form.message.includes('草皮') || form.message.includes('石板') || form.message.includes('鹅卵石') ? (
+                      <p>3. 铺设地面效果...</p>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-xs text-gray-300">预计需要30-60秒，请耐心等待</p>
                 </div>
               ) : (
                 <button
