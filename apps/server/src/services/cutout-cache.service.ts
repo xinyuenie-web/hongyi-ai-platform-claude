@@ -111,8 +111,16 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
     return;
   }
 
-  // Wait 30s for website container to be fully ready
-  await new Promise(r => setTimeout(r, 30000));
+  // Wait for website container to be fully ready (it starts slower than server)
+  console.log('[CutoutCache] Waiting for website container...');
+  for (let i = 0; i < 12; i++) {
+    try {
+      const res = await fetch('http://website:3000/', { signal: AbortSignal.timeout(3000) });
+      if (res.ok) { console.log('[CutoutCache] Website ready!'); break; }
+    } catch {}
+    console.log(`[CutoutCache] Website not ready, waiting... (${i + 1}/12)`);
+    await new Promise(r => setTimeout(r, 10000));
+  }
 
   fs.mkdirSync(CUTOUTS_DIR, { recursive: true });
 
