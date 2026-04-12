@@ -25,7 +25,10 @@ export default async function HomePage() {
             priority
           />
           {/* Gradient overlay at bottom */}
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-brand-navy/90 via-brand-navy/50 to-transparent p-6 pt-20">
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-brand-navy/95 via-brand-navy/60 to-transparent p-6 pt-24">
+            <p className="mb-3 text-center text-sm font-medium text-gray-200">
+              先看效果 · 再选树 · 好下单
+            </p>
             <div className="flex flex-col gap-3">
               <Link href="/ai-plan" className="btn-gold w-full text-center text-base">
                 免费AI方案体验
@@ -51,21 +54,24 @@ export default async function HomePage() {
           </div>
           <div className="flex-1 text-white">
             <p className="mb-3 text-sm font-medium tracking-wider text-brand-gold">
-              全国首家AI驱动
+              AI · 红艺花木
             </p>
             <h1 className="mb-4 text-4xl font-bold leading-tight lg:text-5xl">
-              私家庭院
+              高端庭院别墅
               <br />
-              <span className="text-brand-gold">造型花木</span>
-              <br />
-              一站式服务商
+              <span className="text-brand-gold">造型花木</span>解决方案
             </h1>
-            <p className="mb-8 text-lg leading-relaxed text-gray-300">
-              上传庭院照片，AI秒出设计方案。
-              <br />
-              看效果 → 选好树 → 下订单 → 全程追踪。
-              <br />
-              11年专业经验，百亩基地产地直供。
+            <p className="my-6 rounded-lg border border-brand-gold/30 bg-white/5 px-5 py-3 text-lg font-medium tracking-wide">
+              真院照 + 真树木 + 真想法 = <span className="text-brand-gold">真效果</span>
+            </p>
+            <p className="mb-2 text-base text-gray-300">
+              AI帮您设计庭院花木方案
+            </p>
+            <p className="mb-2 text-base text-gray-200">
+              先看效果 → 再选树 → 好下单
+            </p>
+            <p className="mb-8 text-sm text-gray-400">
+              省心又省事 &nbsp; 省时又省钱
             </p>
             <div className="flex flex-wrap gap-4">
               <Link href="/ai-plan" className="btn-gold text-base">
@@ -87,8 +93,8 @@ export default async function HomePage() {
             {[
               { num: '11年', label: '专业经验' },
               { num: '100亩', label: '基地直供' },
-              { num: 'AI', label: '智能方案' },
-              { num: '全程', label: '可视交付' },
+              { num: 'AI', label: '设计方案' },
+              { num: '省心', label: '省时省钱' },
             ].map((item) => (
               <div key={item.label} className="flex flex-shrink-0 flex-col items-center">
                 <span className="text-xl font-bold text-brand-navy md:text-2xl">{item.num}</span>
@@ -140,9 +146,9 @@ export default async function HomePage() {
       {/* ========== AI Design CTA ========== */}
       <section className="bg-gradient-to-r from-brand-navy to-brand-green-dark py-12 md:py-16">
         <div className="container-page text-center text-white">
-          <h2 className="mb-3 text-2xl font-bold md:text-3xl">AI 庭院方案，30秒出图</h2>
+          <h2 className="mb-3 text-2xl font-bold md:text-3xl">真院照 + 真树木 + 真想法 = 真效果</h2>
           <p className="mx-auto mb-8 max-w-lg text-sm text-gray-300 md:text-base">
-            上传一张庭院照片，AI自动分析风水格局，生成多角度效果图，推荐适配树种，一键获取报价。
+            AI帮您设计庭院花木方案。上传一张庭院照片，AI自动分析风水格局，推荐适配树种，生成真实效果图。
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link href="/ai-plan" className="btn-gold w-full text-base sm:w-auto">

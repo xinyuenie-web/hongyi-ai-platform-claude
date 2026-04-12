@@ -13,7 +13,9 @@ export function Footer() {
               <span className="text-lg font-bold text-white">AI · 红艺花木</span>
             </div>
             <p className="text-sm leading-relaxed">
-              全国首家AI驱动的私家庭院造型花木一站式服务商。
+              高端庭院别墅造型花木解决方案。
+              <br />
+              真院照+真树木+真想法 = 真效果。
               <br />
               11年专业经验，百亩基地直供。
             </p>

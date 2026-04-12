@@ -24,7 +24,7 @@ export function Header() {
           <TreePine className="h-8 w-8 text-brand-green" />
           <div>
             <span className="text-lg font-bold text-brand-navy">红艺花木</span>
-            <span className="ml-1 hidden text-xs text-brand-gold sm:inline">AI · 造型树木</span>
+            <span className="ml-1 hidden text-xs text-brand-gold sm:inline">高端庭院别墅造型花木</span>
           </div>
         </Link>
 
