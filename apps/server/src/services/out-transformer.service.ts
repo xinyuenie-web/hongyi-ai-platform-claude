@@ -22,6 +22,7 @@ export interface OutResult {
   treeCount: number;
   processingMs: number;
   groundTreated?: boolean;
+  _outTiming?: Record<string, number>; // debug timing breakdown
 }
 
 /**
@@ -209,7 +210,10 @@ export async function transform(input: OutInput): Promise<OutResult> {
   let groundTreated = false;
   let strategy = 'composite';
 
+  const compositeMs = Date.now() - tComposite;
+
   // Step 2: Ground treatment via Sharp overlay (instant, <1s)
+  const tGroundStart = Date.now();
   if (designPlan.groundTreatment) {
     try {
       console.log(`[ouT] Applying ground treatment: ${designPlan.groundTreatment.type}...`);
@@ -237,9 +241,10 @@ export async function transform(input: OutInput): Promise<OutResult> {
       console.warn(`[ouT] Ground treatment failed (non-fatal): ${err.message}`);
     }
   }
+  const groundMs = Date.now() - tGroundStart;
 
   const processingMs = Date.now() - t0;
-  console.log(`[ouT] ${strategy} complete in ${processingMs}ms`);
+  console.log(`[ouT] ${strategy} complete in ${processingMs}ms (composite=${compositeMs}ms, ground=${groundMs}ms)`);
 
   return {
     imageUrl: finalImageUrl,
@@ -247,5 +252,6 @@ export async function transform(input: OutInput): Promise<OutResult> {
     treeCount: compositeItems.length,
     processingMs,
     groundTreated,
+    _outTiming: { compositeMs, groundMs, totalMs: processingMs },
   };
 }

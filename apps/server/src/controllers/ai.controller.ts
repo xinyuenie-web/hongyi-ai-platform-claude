@@ -642,6 +642,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
             ),
           ]);
           response.generatedImage = outResult.imageUrl;
+          response._outTiming = outResult._outTiming;
           console.log(`[GeneratePlan] ouT succeeded: ${outResult.strategy}, ${outResult.treeCount} trees, ${outResult.processingMs}ms`);
         } catch (outErr: any) {
           console.error('[GeneratePlan] ouT failed:', outErr.message);
