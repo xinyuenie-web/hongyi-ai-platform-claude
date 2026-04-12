@@ -1,4 +1,6 @@
 import type { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { analyzeGarden } from '../services/garden-ai.service.js';
 import { gardenPhotoToBase64 } from '../services/doubao-vision.service.js';
 import { Tree } from '../models/tree.model.js';
@@ -116,14 +118,14 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
 
   // Cutout cache status
   try {
-    const fs = await import('fs');
-    const path = await import('path');
     const cutoutsDir = path.join(process.cwd(), 'uploads', 'cutouts');
     const cached = fs.existsSync(cutoutsDir)
-      ? fs.readdirSync(cutoutsDir).filter((f: string) => /^HY\d+\.png$/i.test(f) && fs.statSync(path.join(cutoutsDir, f)).size > 1000).length
+      ? fs.readdirSync(cutoutsDir).filter(f => /^HY\d+\.png$/i.test(f) && fs.statSync(path.join(cutoutsDir, f)).size > 1000).length
       : 0;
     results.cutoutCache = { total: 10, cached, missing: 10 - cached, dir: cutoutsDir };
-  } catch {}
+  } catch (e: any) {
+    results.cutoutCache = { error: e.message };
+  }
 
   const allOk = Object.values(results.checks).every((c: any) => c.status === 'OK' || c.status === 'SKIP');
   results.overall = allOk ? 'ALL_OK' : 'ISSUES_FOUND';
