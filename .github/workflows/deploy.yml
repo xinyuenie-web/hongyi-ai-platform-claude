@@ -96,23 +96,32 @@ jobs:
             fi
           done
 
-          # Write mirror to daemon.json (only if found)
+          # Write mirror to daemon.json (only restart Docker if config changed)
           if [ -n "$WORKING_MIRROR" ]; then
-            echo "{\"registry-mirrors\":[\"https://$WORKING_MIRROR\"],\"log-driver\":\"json-file\",\"log-opts\":{\"max-size\":\"10m\",\"max-file\":\"3\"}}" > /etc/docker/daemon.json
+            NEW_CFG="{\"registry-mirrors\":[\"https://$WORKING_MIRROR\"],\"log-driver\":\"json-file\",\"log-opts\":{\"max-size\":\"10m\",\"max-file\":\"3\"}}"
           else
-            echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+            NEW_CFG='{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}'
           fi
-          systemctl daemon-reload
-          systemctl restart docker
-          sleep 3
+          OLD_CFG=$(cat /etc/docker/daemon.json 2>/dev/null || echo "")
+          if [ "$NEW_CFG" != "$OLD_CFG" ]; then
+            echo "$NEW_CFG" > /etc/docker/daemon.json
+            systemctl daemon-reload
+            systemctl restart docker
+            sleep 3
+            echo "Docker config updated and restarted"
+          fi
 
-          # --- Clone or update code ---
+          # --- Clone or update code (with retry for GFW instability) ---
           if [ ! -d "$PROJECT_DIR/.git" ]; then
             rm -rf "$PROJECT_DIR"
             git clone "$REPO_URL" "$PROJECT_DIR"
           fi
           cd "$PROJECT_DIR"
-          git fetch origin main
+          for attempt in 1 2 3; do
+            if git fetch origin main 2>&1; then break; fi
+            echo "git fetch failed (attempt $attempt/3), retrying in 5s..."
+            sleep 5
+          done
           git reset --hard origin/main
           echo "Version: $(git log --oneline -1)"
 
