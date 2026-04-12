@@ -60,12 +60,21 @@ jobs:
             systemctl enable docker
           fi
 
-          # Always update Docker mirror config (fix stale/broken mirrors)
+          # Fix Docker registry: remove broken mirrors, use Docker Hub direct
           mkdir -p /etc/docker
-          echo '{"registry-mirrors":["https://docker.xuanyuan.me","https://hub-mirror.c.163.com","https://docker.m.daocloud.io"],"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+          echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
           systemctl daemon-reload
           systemctl restart docker
           sleep 3
+
+          # Pre-pull base image with retry (mirrors often corrupt data)
+          echo "=== Pulling base images ==="
+          for i in 1 2 3; do
+            docker pull node:20-alpine && break
+            echo "Pull failed (attempt $i/3), clearing buildkit cache..."
+            docker builder prune -af 2>/dev/null || true
+            sleep 5
+          done
 
           # Clone or pull
           if [ ! -d "$PROJECT_DIR/.git" ]; then
