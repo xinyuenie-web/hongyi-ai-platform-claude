@@ -106,6 +106,26 @@ async function tryLoadCachedCutout(imageUrl: string): Promise<Buffer | null> {
 }
 
 /**
+ * Save a cropped cutout to cache for future use (fire-and-forget).
+ * Called after successful BiRefNet removal during compositing.
+ */
+function saveCutoutToCache(imageUrl: string, cutoutBuf: Buffer): void {
+  try {
+    const match = imageUrl.match(/\/(HY\d+)\.\w+$/i);
+    if (!match) return;
+    const treeId = match[1].toUpperCase();
+    fs.mkdirSync(SERVER_CUTOUTS_DIR, { recursive: true });
+    const cachePath = path.join(SERVER_CUTOUTS_DIR, `${treeId}.png`);
+    if (!fs.existsSync(cachePath) || fs.statSync(cachePath).size < 1000) {
+      fs.writeFileSync(cachePath, cutoutBuf);
+      console.log(`[TreeComposite] Cached cutout: ${treeId} (${(cutoutBuf.length / 1024).toFixed(0)}KB)`);
+    }
+  } catch (err: any) {
+    console.warn(`[TreeComposite] Failed to cache cutout: ${err.message}`);
+  }
+}
+
+/**
  * Download image from fal.ai CDN (handles China blocking via proxy).
  */
 async function downloadFalResult(imageUrl: string): Promise<Buffer> {
@@ -346,6 +366,9 @@ export async function compositeTreesOnGarden(options: {
             .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
             .png()
             .toBuffer();
+
+          // Save to cache for future use (fire-and-forget)
+          saveCutoutToCache(tree.imageUrl, croppedCutout);
 
           overlayBuf = await sharp(croppedCutout)
             .resize(targetW, targetH, {

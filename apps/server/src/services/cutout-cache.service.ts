@@ -110,8 +110,8 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
     return;
   }
 
-  // Wait 10s for website container to be ready
-  await new Promise(r => setTimeout(r, 10000));
+  // Wait 30s for website container to be fully ready
+  await new Promise(r => setTimeout(r, 30000));
 
   fs.mkdirSync(CUTOUTS_DIR, { recursive: true });
 
@@ -168,8 +168,8 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
       console.log(`[CutoutCache] ${treeId} OK — ${(croppedBuf.length / 1024).toFixed(0)}KB in ${elapsed}ms`);
       success++;
 
-      // 2s delay between API calls to avoid rate limiting
-      await new Promise(r => setTimeout(r, 2000));
+      // 5s delay between API calls to avoid rate limiting
+      await new Promise(r => setTimeout(r, 5000));
     } catch (err: any) {
       console.error(`[CutoutCache] ${treeId} FAILED: ${err.message}`);
       failed++;
