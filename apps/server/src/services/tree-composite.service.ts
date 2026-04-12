@@ -243,8 +243,10 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Create a soft-edge version of an image (fallback when BiRefNet fails).
- * Adds a feathered elliptical mask so the tree blends into the garden.
+ * Create a clean background-removed version of a tree image.
+ * Uses luminance thresholding — product photos have white/light backgrounds,
+ * so we make bright pixels transparent and keep the dark tree.
+ * Much better than the old elliptical mask approach.
  */
 async function createSoftEdgeOverlay(
   sharp: any,
@@ -252,36 +254,62 @@ async function createSoftEdgeOverlay(
   targetW: number,
   targetH: number,
 ): Promise<Buffer> {
-  // Resize image
-  const resized = await sharp(imageBuffer)
-    .resize(targetW, targetH, { fit: 'cover' })
+  // Step 1: Crop bottom 15% to remove pot/container, then resize
+  const origMeta = await sharp(imageBuffer).metadata();
+  const cropH = Math.round((origMeta.height || 500) * 0.85);
+  const cropped = await sharp(imageBuffer)
+    .extract({ left: 0, top: 0, width: origMeta.width!, height: cropH })
+    .toBuffer();
+
+  // Step 2: Resize to target with transparent background (contain, not cover)
+  const resized = await sharp(cropped)
+    .resize(targetW, targetH, {
+      fit: 'contain',
+      background: { r: 255, g: 255, b: 255, alpha: 0 },
+    })
     .png()
     .toBuffer();
 
-  // Create an elliptical alpha mask with feathered edges
-  const cx = Math.round(targetW / 2);
-  const cy = Math.round(targetH / 2);
-  const rx = Math.round(targetW * 0.45);
-  const ry = Math.round(targetH * 0.48);
-  // Use radial gradient for soft edges via SVG
-  const maskSvg = Buffer.from(
-    `<svg width="${targetW}" height="${targetH}">
-      <defs>
-        <radialGradient id="g" cx="50%" cy="50%" rx="50%" ry="50%">
-          <stop offset="60%" stop-color="white" stop-opacity="1"/>
-          <stop offset="100%" stop-color="white" stop-opacity="0"/>
-        </radialGradient>
-      </defs>
-      <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="url(#g)"/>
-    </svg>`,
-  );
+  // Step 3: Create a luminance-based mask
+  // Product photos have white/light gray backgrounds → bright pixels = transparent
+  // Tree foliage/trunk is dark/colorful → dark pixels = opaque
+  const greyBuf = await sharp(resized)
+    .greyscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  // Apply the mask as alpha channel
-  const mask = await sharp(maskSvg).resize(targetW, targetH).greyscale().png().toBuffer();
+  const { data: greyData, info: greyInfo } = greyBuf;
+  const maskData = Buffer.alloc(greyInfo.width * greyInfo.height);
 
+  // Threshold: pixels brighter than threshold → transparent (0), darker → opaque (255)
+  // Use a generous threshold to catch light backgrounds
+  const BG_THRESHOLD = 210; // brightness above this = background
+  const EDGE_LOW = 180;     // soft transition zone: 180-210
+
+  for (let i = 0; i < greyData.length; i++) {
+    const v = greyData[i];
+    if (v >= BG_THRESHOLD) {
+      maskData[i] = 0; // fully transparent (background)
+    } else if (v >= EDGE_LOW) {
+      // Soft transition zone
+      maskData[i] = Math.round(255 * (1 - (v - EDGE_LOW) / (BG_THRESHOLD - EDGE_LOW)));
+    } else {
+      maskData[i] = 255; // fully opaque (tree)
+    }
+  }
+
+  // Step 4: Create mask image and apply slight blur for smooth edges
+  const maskImg = await sharp(maskData, {
+    raw: { width: greyInfo.width, height: greyInfo.height, channels: 1 },
+  })
+    .blur(1.2) // slight edge feathering
+    .png()
+    .toBuffer();
+
+  // Step 5: Apply mask as alpha channel
   return sharp(resized)
     .ensureAlpha()
-    .composite([{ input: mask, blend: 'dest-in' }])
+    .composite([{ input: maskImg, blend: 'dest-in' }])
     .png()
     .toBuffer();
 }

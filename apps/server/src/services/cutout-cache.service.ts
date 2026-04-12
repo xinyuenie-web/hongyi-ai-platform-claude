@@ -69,9 +69,10 @@ async function removeBackgroundBiRefNet(imageBuffer: Buffer): Promise<Buffer> {
   const base64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
   const proxyUrl = process.env.FAL_PROXY_URL;
 
+  // Try proxy FIRST (more reliable from China), then direct
   const endpoints = [
-    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
     ...(proxyUrl ? [{ name: 'proxy', url: `${proxyUrl}/fal-sync/fal-ai/birefnet` }] : []),
+    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
   ];
 
   for (const ep of endpoints) {
@@ -145,36 +146,52 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
   let success = 0;
   let failed = 0;
 
-  for (const file of missing) {
-    const treeId = file.replace(/\.jpg$/i, '');
-    const cutoutPath = path.join(CUTOUTS_DIR, `${treeId}.png`);
+  // Two passes: first attempt all missing, then retry failures after a delay
+  const MAX_RETRIES = 2;
+  let pendingFiles = [...missing];
 
-    try {
-      console.log(`[CutoutCache] Processing ${treeId}...`);
-      const t0 = Date.now();
-      const imgBuf = await readTreeImage(treeId);
-      const cutoutBuf = await removeBackgroundBiRefNet(imgBuf);
-
-      // Crop bottom 15% to remove pot
-      const meta = await sharp(cutoutBuf).metadata();
-      const cropH = Math.round(meta.height! * 0.85);
-      const croppedBuf = await sharp(cutoutBuf)
-        .extract({ left: 0, top: 0, width: meta.width!, height: cropH })
-        .png()
-        .toBuffer();
-
-      fs.writeFileSync(cutoutPath, croppedBuf);
-      const elapsed = Date.now() - t0;
-      console.log(`[CutoutCache] ${treeId} OK — ${(croppedBuf.length / 1024).toFixed(0)}KB in ${elapsed}ms`);
-      success++;
-
-      // 5s delay between API calls to avoid rate limiting
-      await new Promise(r => setTimeout(r, 5000));
-    } catch (err: any) {
-      console.error(`[CutoutCache] ${treeId} FAILED: ${err.message}`);
-      failed++;
+  for (let attempt = 0; attempt <= MAX_RETRIES && pendingFiles.length > 0; attempt++) {
+    if (attempt > 0) {
+      console.log(`[CutoutCache] Retry pass ${attempt}/${MAX_RETRIES}: ${pendingFiles.length} remaining, waiting 30s...`);
+      await new Promise(r => setTimeout(r, 30000));
     }
+
+    const stillFailed: string[] = [];
+
+    for (const file of pendingFiles) {
+      const treeId = file.replace(/\.jpg$/i, '');
+      const cutoutPath = path.join(CUTOUTS_DIR, `${treeId}.png`);
+
+      try {
+        console.log(`[CutoutCache] Processing ${treeId} (attempt ${attempt + 1})...`);
+        const t0 = Date.now();
+        const imgBuf = await readTreeImage(treeId);
+        const cutoutBuf = await removeBackgroundBiRefNet(imgBuf);
+
+        // Crop bottom 15% to remove pot
+        const meta = await sharp(cutoutBuf).metadata();
+        const cropH = Math.round(meta.height! * 0.85);
+        const croppedBuf = await sharp(cutoutBuf)
+          .extract({ left: 0, top: 0, width: meta.width!, height: cropH })
+          .png()
+          .toBuffer();
+
+        fs.writeFileSync(cutoutPath, croppedBuf);
+        const elapsed = Date.now() - t0;
+        console.log(`[CutoutCache] ${treeId} OK — ${(croppedBuf.length / 1024).toFixed(0)}KB in ${elapsed}ms`);
+        success++;
+
+        // 3s delay between API calls to avoid rate limiting
+        await new Promise(r => setTimeout(r, 3000));
+      } catch (err: any) {
+        console.error(`[CutoutCache] ${treeId} FAILED: ${err.message}`);
+        stillFailed.push(file);
+      }
+    }
+
+    pendingFiles = stillFailed;
   }
 
-  console.log(`[CutoutCache] Done: ${success} generated, ${failed} failed, ${treeFiles.length - missing.length} already cached`);
+  failed = pendingFiles.length;
+  console.log(`[CutoutCache] Done: ${success} generated, ${failed} still failed, ${treeFiles.length - missing.length} already cached`);
 }
