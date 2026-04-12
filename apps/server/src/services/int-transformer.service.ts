@@ -344,21 +344,75 @@ function applyLayoutPreferences(
     return result;
   }
 
-  // 留车位 — clear center area
+  // 留车位 — clear center area, push trees to sides
   if (msg.includes('车位') || msg.includes('停车')) {
+    console.log(`[inT] 留车位: clearing center for parking`);
     return placements.map(p => {
-      if (p.x > 0.35 && p.x < 0.65) {
-        return { ...p, x: p.x < 0.5 ? 0.2 : 0.8 };
+      if (p.x > 0.3 && p.x < 0.7) {
+        return { ...p, x: p.x < 0.5 ? 0.15 : 0.85 };
       }
       return p;
     });
   }
 
-  // 风水东南 — prefer bottom-right area
-  if (msg.includes('东南') || msg.includes('风水')) {
+  // 门口/入口两侧 — trees flanking entrance (center-bottom)
+  if ((msg.includes('门口') || msg.includes('入口') || msg.includes('大门')) && placements.length >= 2) {
+    console.log(`[inT] 门口布局: flanking entrance`);
+    const result: DesignPlan['placements'] = [];
+    result.push({ ...placements[0], x: 0.35, y: 0.85 });
+    result.push({ ...placements[1], x: 0.65, y: 0.85 });
+    for (let i = 2; i < placements.length; i++) {
+      result.push(placements[i]);
+    }
+    return result;
+  }
+
+  // 沿墙/靠边 — trees along edges
+  if (msg.includes('沿墙') || msg.includes('靠边') || msg.includes('围边') || msg.includes('边上')) {
+    console.log(`[inT] 沿墙布局: placing trees along edges`);
+    const count = placements.length;
     return placements.map((p, i) => {
-      if (i === 0) return { ...p, x: Math.max(p.x, 0.65), y: Math.max(p.y, 0.75) };
+      // Distribute along left and right edges
+      const side = i % 2 === 0 ? 0.12 : 0.88;
+      const yStep = 0.6 + (i / count) * 0.3; // spread vertically
+      return { ...p, x: side, y: Math.min(0.92, yStep) };
+    });
+  }
+
+  // 风水方位
+  if (msg.includes('风水')) {
+    // 东南方位 — southeast (bottom-right in image)
+    if (msg.includes('东南')) {
+      console.log(`[inT] 风水: 东南方位`);
+      return placements.map((p, i) => {
+        if (i === 0) return { ...p, x: 0.70, y: 0.80 };
+        return p;
+      });
+    }
+    // 西北 — northwest (top-left in image)
+    if (msg.includes('西北')) {
+      console.log(`[inT] 风水: 西北方位`);
+      return placements.map((p, i) => {
+        if (i === 0) return { ...p, x: 0.25, y: 0.60 };
+        return p;
+      });
+    }
+    // General fengshui — place main tree in auspicious position
+    console.log(`[inT] 风水: 默认吉位`);
+    return placements.map((p, i) => {
+      if (i === 0) return { ...p, x: 0.65, y: 0.75 };
       return p;
+    });
+  }
+
+  // 分散/均匀 — even distribution across garden
+  if (msg.includes('分散') || msg.includes('均匀') || msg.includes('均布')) {
+    console.log(`[inT] 均匀分散布局`);
+    const count = placements.length;
+    if (count <= 1) return placements;
+    return placements.map((p, i) => {
+      const xPos = 0.15 + (i / (count - 1)) * 0.70; // 0.15 to 0.85
+      return { ...p, x: xPos };
     });
   }
 
