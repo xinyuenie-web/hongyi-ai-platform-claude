@@ -139,13 +139,16 @@ jobs:
           docker volume prune -f 2>/dev/null || true
           echo "=== Docker cleanup done, disk: $(df -h / | tail -1 | awk '{print $4}') free ==="
 
-          # Set BASE_IMAGE to use mirror directly in Dockerfile FROM, bypassing BuildKit registry resolution
+          # Disable BuildKit — it ignores local cache and fails on Chinese mirror metadata
+          export DOCKER_BUILDKIT=0
+          export COMPOSE_DOCKER_CLI_BUILD=0
+          # Set BASE_IMAGE to working mirror if available
           if [ -n "$WORKING_MIRROR" ]; then
             export BASE_IMAGE="$WORKING_MIRROR/library/node:20-alpine"
           else
             export BASE_IMAGE="node:20-alpine"
           fi
-          echo "=== Docker build starting (BASE_IMAGE=$BASE_IMAGE) ==="
+          echo "=== Docker build starting (BUILDKIT=0, BASE_IMAGE=$BASE_IMAGE) ==="
           docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans 2>&1 || {
             echo "=== Docker build FAILED ==="
             echo "--- Server container logs ---"
