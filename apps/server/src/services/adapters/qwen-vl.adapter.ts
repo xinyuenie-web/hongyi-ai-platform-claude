@@ -43,7 +43,7 @@ export class QwenVLAdapter implements ModelAdapter {
       temperature: 0.7,
     };
 
-    const timeout = Number(process.env.INT_MAX_TIMEOUT_MS) || 20000;
+    const timeout = Number(process.env.INT_MAX_TIMEOUT_MS) || 25000;
     console.log(`[Qwen-VL] Calling qwen-vl-max with ${input.trees.length} trees...`);
     const t0 = Date.now();
 

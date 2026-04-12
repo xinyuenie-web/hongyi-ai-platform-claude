@@ -574,7 +574,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
     // Overall handler timeout: 80s — return whatever we have
     // ============================================================
     const handlerStart = Date.now();
-    const HANDLER_TIMEOUT_MS = 80000; // 80s max for entire handler
+    const HANDLER_TIMEOUT_MS = 100000; // 100s max for entire handler
 
     const analysisMessage = message || `${styleName}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
 
