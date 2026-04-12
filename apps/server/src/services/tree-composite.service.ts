@@ -254,9 +254,9 @@ async function createSoftEdgeOverlay(
   targetW: number,
   targetH: number,
 ): Promise<Buffer> {
-  // Step 1: Crop bottom 15% to remove pot/container, then resize
+  // Step 1: Crop bottom 25% to remove pot/container, then resize
   const origMeta = await sharp(imageBuffer).metadata();
-  const cropH = Math.round((origMeta.height || 500) * 0.85);
+  const cropH = Math.round((origMeta.height || 500) * 0.75); // aggressive 25% crop
   const cropped = await sharp(imageBuffer)
     .extract({ left: 0, top: 0, width: origMeta.width!, height: cropH })
     .toBuffer();
@@ -283,8 +283,8 @@ async function createSoftEdgeOverlay(
 
   // Threshold: pixels brighter than threshold → transparent (0), darker → opaque (255)
   // Use a generous threshold to catch light backgrounds
-  const BG_THRESHOLD = 210; // brightness above this = background
-  const EDGE_LOW = 180;     // soft transition zone: 180-210
+  const BG_THRESHOLD = 195; // brightness above this = background (was 210, more aggressive)
+  const EDGE_LOW = 165;     // soft transition zone: 165-195
 
   for (let i = 0; i < greyData.length; i++) {
     const v = greyData[i];

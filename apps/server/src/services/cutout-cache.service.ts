@@ -170,7 +170,7 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
 
         // Crop bottom 15% to remove pot
         const meta = await sharp(cutoutBuf).metadata();
-        const cropH = Math.round(meta.height! * 0.85);
+        const cropH = Math.round(meta.height! * 0.75); // 25% crop to remove pot
         const croppedBuf = await sharp(cutoutBuf)
           .extract({ left: 0, top: 0, width: meta.width!, height: cropH })
           .png()
