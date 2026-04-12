@@ -89,9 +89,10 @@ jobs:
           nginx -s stop 2>/dev/null || true
           systemctl stop nginx 2>/dev/null || true
 
-          # Clean up Docker to free disk space (aggressive)
-          docker builder prune -f 2>/dev/null || true
-          docker system prune -af --filter "until=1h" 2>/dev/null || true
+          # Clean up Docker to free disk space (very aggressive — small VPS)
+          docker builder prune -af 2>/dev/null || true
+          docker system prune -af 2>/dev/null || true
+          docker volume prune -f 2>/dev/null || true
           echo "=== Docker cleanup done, disk: $(df -h / | tail -1 | awk '{print $4}') free ==="
 
           # Docker build and deploy
@@ -110,7 +111,7 @@ jobs:
 
           # Health check
           sleep 15
-          docker compose ps
+          docker compose ps || true
           HEALTH_OK=0
           for i in 1 2 3 4 5 6; do
             if curl -sf http://localhost/api/health > /dev/null 2>&1; then
