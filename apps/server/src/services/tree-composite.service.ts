@@ -377,33 +377,10 @@ export async function compositeTreesOnGarden(options: {
           .toBuffer();
         console.log(`[TreeComposite] Tree ${idx + 1} using CACHED cutout → ${targetW}x${targetH}`);
       } else {
-        // Step 2: No cache — fall back to BiRefNet API
-        try {
-          const cutoutBuf = await removeBackground(treeImgBuf);
-          console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
-
-          // Crop bottom 15% to remove pot/container
-          const cutoutMeta = await sharp(cutoutBuf).metadata();
-          const cropH = Math.round(cutoutMeta.height! * 0.85);
-          const croppedCutout = await sharp(cutoutBuf)
-            .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
-            .png()
-            .toBuffer();
-
-          // Save to cache for future use (fire-and-forget)
-          saveCutoutToCache(tree.imageUrl, croppedCutout);
-
-          overlayBuf = await sharp(croppedCutout)
-            .resize(targetW, targetH, {
-              fit: 'contain',
-              background: { r: 0, g: 0, b: 0, alpha: 0 },
-            })
-            .png()
-            .toBuffer();
-        } catch (bgErr: any) {
-          console.warn(`[TreeComposite] Tree ${idx + 1} BiRefNet failed: ${bgErr.message}, using soft-edge fallback`);
-          overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
-        }
+        // No cache — use soft-edge fallback IMMEDIATELY (BiRefNet is unreliable from China)
+        // BiRefNet is only used by background cutout-cache.service.ts (async, non-blocking)
+        console.log(`[TreeComposite] Tree ${idx + 1} no cache → instant soft-edge fallback`);
+        overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
       }
 
       // Generate shadow
