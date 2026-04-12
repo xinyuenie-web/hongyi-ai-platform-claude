@@ -67,12 +67,14 @@ jobs:
           echo "=== Pulling base image via mirrors ==="
           MIRRORS=("docker.xuanyuan.me" "docker.m.daocloud.io" "hub.rat.dev" "docker.1ms.run")
           PULLED=0
+          WORKING_MIRROR=""
           for mirror in "${MIRRORS[@]}"; do
             echo "Trying mirror: $mirror ..."
             if docker pull "$mirror/library/node:20-alpine" 2>&1; then
               docker tag "$mirror/library/node:20-alpine" node:20-alpine
               docker tag "$mirror/library/node:20-alpine" docker.io/library/node:20-alpine
               echo "SUCCESS via $mirror"
+              WORKING_MIRROR="$mirror"
               PULLED=1
               break
             fi
@@ -96,8 +98,12 @@ jobs:
             fi
           done
 
-          # No registry-mirrors in daemon.json (all broken), use pre-pulled images
-          echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+          # Configure working mirror in daemon.json so BuildKit also uses it
+          if [ -n "$WORKING_MIRROR" ]; then
+            echo "{\"registry-mirrors\":[\"https://$WORKING_MIRROR\"],\"log-driver\":\"json-file\",\"log-opts\":{\"max-size\":\"10m\",\"max-file\":\"3\"}}" > /etc/docker/daemon.json
+          else
+            echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+          fi
           systemctl daemon-reload
           systemctl restart docker
           sleep 3
