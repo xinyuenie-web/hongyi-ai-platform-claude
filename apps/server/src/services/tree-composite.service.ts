@@ -244,9 +244,10 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
 
 /**
  * Create a clean background-removed version of a tree image.
- * Uses luminance thresholding — product photos have white/light backgrounds,
- * so we make bright pixels transparent and keep the dark tree.
- * Much better than the old elliptical mask approach.
+ * Uses RGB color analysis + saturation detection instead of simple luminance.
+ * Product photos have white/light-gray backgrounds with low saturation,
+ * while tree foliage (even light green) has higher saturation.
+ * This preserves foliage colors that greyscale thresholding would erase.
  */
 async function createSoftEdgeOverlay(
   sharp: any,
@@ -256,7 +257,7 @@ async function createSoftEdgeOverlay(
 ): Promise<Buffer> {
   // Step 1: Crop bottom 25% to remove pot/container, then resize
   const origMeta = await sharp(imageBuffer).metadata();
-  const cropH = Math.round((origMeta.height || 500) * 0.75); // aggressive 25% crop
+  const cropH = Math.round((origMeta.height || 500) * 0.75);
   const cropped = await sharp(imageBuffer)
     .extract({ left: 0, top: 0, width: origMeta.width!, height: cropH })
     .toBuffer();
@@ -267,49 +268,101 @@ async function createSoftEdgeOverlay(
       fit: 'contain',
       background: { r: 255, g: 255, b: 255, alpha: 0 },
     })
+    .ensureAlpha()
     .png()
     .toBuffer();
 
-  // Step 3: Create a luminance-based mask
-  // Product photos have white/light gray backgrounds → bright pixels = transparent
-  // Tree foliage/trunk is dark/colorful → dark pixels = opaque
-  const greyBuf = await sharp(resized)
-    .greyscale()
+  // Step 3: Get raw RGBA data for color-based background detection
+  const rawBuf = await sharp(resized)
+    .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const { data: greyData, info: greyInfo } = greyBuf;
-  const maskData = Buffer.alloc(greyInfo.width * greyInfo.height);
+  const { data: rgbaData, info: rgbaInfo } = rawBuf;
+  const pixelCount = rgbaInfo.width * rgbaInfo.height;
+  const maskData = Buffer.alloc(pixelCount);
 
-  // Threshold: pixels brighter than threshold → transparent (0), darker → opaque (255)
-  // Use a generous threshold to catch light backgrounds
-  const BG_THRESHOLD = 195; // brightness above this = background (was 210, more aggressive)
-  const EDGE_LOW = 165;     // soft transition zone: 165-195
+  for (let i = 0; i < pixelCount; i++) {
+    const r = rgbaData[i * 4];
+    const g = rgbaData[i * 4 + 1];
+    const b = rgbaData[i * 4 + 2];
+    const a = rgbaData[i * 4 + 3];
 
-  for (let i = 0; i < greyData.length; i++) {
-    const v = greyData[i];
-    if (v >= BG_THRESHOLD) {
-      maskData[i] = 0; // fully transparent (background)
-    } else if (v >= EDGE_LOW) {
-      // Soft transition zone
-      maskData[i] = Math.round(255 * (1 - (v - EDGE_LOW) / (BG_THRESHOLD - EDGE_LOW)));
+    // Already transparent (from contain padding) → keep transparent
+    if (a < 10) {
+      maskData[i] = 0;
+      continue;
+    }
+
+    // Calculate HSV-style saturation and brightness
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    const saturation = maxC === 0 ? 0 : (maxC - minC) / maxC; // 0.0–1.0
+    const brightness = maxC; // 0–255 (V in HSV)
+
+    // Decision logic:
+    // 1. Pure white/near-white background: very bright + very low saturation
+    // 2. Light gray background: bright + low saturation
+    // 3. Colored foliage: any saturation > threshold → keep opaque
+    // 4. Dark pixels (trunk, shadows): always opaque
+
+    if (brightness >= 240 && saturation < 0.06) {
+      // Definite white background
+      maskData[i] = 0;
+    } else if (brightness >= 220 && saturation < 0.10) {
+      // Near-white, gentle transition
+      const bFade = (brightness - 220) / 35; // 220→255 maps to 0→1
+      const sFade = 1 - saturation / 0.10;   // 0→0.10 maps to 1→0
+      const fadeOut = Math.min(1, bFade * sFade);
+      maskData[i] = Math.round(255 * (1 - fadeOut));
+    } else if (brightness >= 200 && saturation < 0.05) {
+      // Light gray with no color — likely background
+      const fade = (brightness - 200) / 55;
+      maskData[i] = Math.round(255 * (1 - fade * 0.7));
     } else {
-      maskData[i] = 255; // fully opaque (tree)
+      // Tree foliage, trunk, or any saturated/dark pixel — keep opaque
+      maskData[i] = 255;
     }
   }
 
-  // Step 4: Create mask image and apply slight blur for smooth edges
+  // Step 4: Blur mask for smooth edge feathering (larger radius for natural look)
   const maskImg = await sharp(maskData, {
-    raw: { width: greyInfo.width, height: greyInfo.height, channels: 1 },
+    raw: { width: rgbaInfo.width, height: rgbaInfo.height, channels: 1 },
   })
-    .blur(1.2) // slight edge feathering
+    .blur(2.0)
     .png()
     .toBuffer();
 
   // Step 5: Apply mask as alpha channel
-  return sharp(resized)
+  const masked = await sharp(resized)
     .ensureAlpha()
     .composite([{ input: maskImg, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+
+  // Step 6: Remove white fringing — desaturate semi-transparent edge pixels
+  // This prevents white halos where the tree meets the garden background
+  const finalRaw = await sharp(masked)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const { data: fData, info: fInfo } = finalRaw;
+  for (let i = 0; i < fInfo.width * fInfo.height; i++) {
+    const fa = fData[i * 4 + 3];
+    // Semi-transparent edge pixels (alpha 10-200): pull RGB toward darker values
+    // to suppress white fringing against any background
+    if (fa > 10 && fa < 200) {
+      const factor = fa / 255; // 0→1 as opacity increases
+      fData[i * 4]     = Math.round(fData[i * 4]     * (0.5 + 0.5 * factor)); // R
+      fData[i * 4 + 1] = Math.round(fData[i * 4 + 1] * (0.5 + 0.5 * factor)); // G
+      fData[i * 4 + 2] = Math.round(fData[i * 4 + 2] * (0.5 + 0.5 * factor)); // B
+    }
+  }
+
+  return sharp(fData, {
+    raw: { width: fInfo.width, height: fInfo.height, channels: 4 },
+  })
     .png()
     .toBuffer();
 }
@@ -397,21 +450,35 @@ export async function compositeTreesOnGarden(options: {
 
       if (cachedCutout) {
         // Cache hit — crop bottom 12% to ensure pot/container is fully removed
-        // (older cache entries may have been generated with less aggressive crop)
         const cachedMeta = await sharp(cachedCutout).metadata();
         const cachedH = cachedMeta.height || 500;
         const cachedW = cachedMeta.width || 500;
-        const safeH = Math.round(cachedH * 0.88); // remove bottom 12%
+        const safeH = Math.round(cachedH * 0.88);
         const croppedCutout = await sharp(cachedCutout)
           .extract({ left: 0, top: 0, width: cachedW, height: safeH })
-          .toBuffer();
-        overlayBuf = await sharp(croppedCutout)
           .resize(targetW, targetH, {
             fit: 'contain',
             background: { r: 0, g: 0, b: 0, alpha: 0 },
           })
+          .ensureAlpha()
           .png()
           .toBuffer();
+
+        // Refine edges: suppress white fringing on semi-transparent pixels
+        const cachedRaw = await sharp(croppedCutout).ensureAlpha().raw()
+          .toBuffer({ resolveWithObject: true });
+        const { data: cd, info: ci } = cachedRaw;
+        for (let px = 0; px < ci.width * ci.height; px++) {
+          const ca = cd[px * 4 + 3];
+          if (ca > 10 && ca < 200) {
+            const f = ca / 255;
+            cd[px * 4]     = Math.round(cd[px * 4]     * (0.5 + 0.5 * f));
+            cd[px * 4 + 1] = Math.round(cd[px * 4 + 1] * (0.5 + 0.5 * f));
+            cd[px * 4 + 2] = Math.round(cd[px * 4 + 2] * (0.5 + 0.5 * f));
+          }
+        }
+        overlayBuf = await sharp(cd, { raw: { width: ci.width, height: ci.height, channels: 4 } })
+          .png().toBuffer();
         console.log(`[TreeComposite] Tree ${idx + 1} using CACHED cutout (cropped ${cachedW}x${cachedH}→${cachedW}x${safeH}) → ${targetW}x${targetH}`);
       } else {
         // No cache — use soft-edge fallback IMMEDIATELY (BiRefNet is unreliable from China)

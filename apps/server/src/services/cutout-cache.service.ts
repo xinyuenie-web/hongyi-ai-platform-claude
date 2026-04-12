@@ -116,6 +116,21 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
 
   fs.mkdirSync(CUTOUTS_DIR, { recursive: true });
 
+  // Cache version: bump this to force regeneration of all cutouts
+  // v2: 25% bottom crop instead of 15%, better quality
+  const CACHE_VERSION = 'v2';
+  const versionFile = path.join(CUTOUTS_DIR, '.cache-version');
+  const currentVersion = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf-8').trim() : '';
+  if (currentVersion !== CACHE_VERSION) {
+    console.log(`[CutoutCache] Cache version mismatch (${currentVersion || 'none'} → ${CACHE_VERSION}), clearing old cutouts...`);
+    const oldFiles = fs.readdirSync(CUTOUTS_DIR).filter(f => f.endsWith('.png'));
+    for (const f of oldFiles) {
+      fs.unlinkSync(path.join(CUTOUTS_DIR, f));
+    }
+    fs.writeFileSync(versionFile, CACHE_VERSION);
+    console.log(`[CutoutCache] Cleared ${oldFiles.length} old cutouts`);
+  }
+
   const treeFiles = getTreeFileList();
   console.log(`[CutoutCache] Found ${treeFiles.length} tree images to check`);
 
