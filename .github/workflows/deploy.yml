@@ -60,21 +60,47 @@ jobs:
             systemctl enable docker
           fi
 
-          # Fix Docker registry: remove broken mirrors, use Docker Hub direct
+          # Fix Docker registry: try multiple mirrors (Docker Hub blocked in China)
           mkdir -p /etc/docker
+
+          # Pre-pull base image trying multiple mirrors until one works
+          echo "=== Pulling base image via mirrors ==="
+          MIRRORS=("docker.xuanyuan.me" "docker.m.daocloud.io" "hub.rat.dev" "docker.1ms.run")
+          PULLED=0
+          for mirror in "${MIRRORS[@]}"; do
+            echo "Trying mirror: $mirror ..."
+            if docker pull "$mirror/library/node:20-alpine" 2>&1; then
+              docker tag "$mirror/library/node:20-alpine" node:20-alpine
+              docker tag "$mirror/library/node:20-alpine" docker.io/library/node:20-alpine
+              echo "SUCCESS via $mirror"
+              PULLED=1
+              break
+            fi
+            echo "Mirror $mirror failed, trying next..."
+          done
+          if [ "$PULLED" = "0" ]; then
+            echo "WARNING: All mirrors failed, trying direct..."
+            docker pull node:20-alpine || true
+          fi
+
+          # Also pull nginx and mongo if needed
+          for img in nginx:alpine mongo:7; do
+            if ! docker image inspect "$img" >/dev/null 2>&1; then
+              for mirror in "${MIRRORS[@]}"; do
+                base="${img%%:*}"; tag="${img#*:}"
+                if docker pull "$mirror/library/$base:$tag" 2>&1; then
+                  docker tag "$mirror/library/$base:$tag" "$img"
+                  break
+                fi
+              done
+            fi
+          done
+
+          # No registry-mirrors in daemon.json (all broken), use pre-pulled images
           echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
           systemctl daemon-reload
           systemctl restart docker
           sleep 3
-
-          # Pre-pull base image with retry (mirrors often corrupt data)
-          echo "=== Pulling base images ==="
-          for i in 1 2 3; do
-            docker pull node:20-alpine && break
-            echo "Pull failed (attempt $i/3), clearing buildkit cache..."
-            docker builder prune -af 2>/dev/null || true
-            sleep 5
-          done
 
           # Clone or pull
           if [ ! -d "$PROJECT_DIR/.git" ]; then
