@@ -59,11 +59,11 @@ async function applyGroundTreatmentSharp(
     case 'grass':
       baseColor = 'rgb(45,140,35)';
       gradientStops = `
-        <stop offset="0%" stop-color="rgb(55,160,40)" stop-opacity="0.55"/>
-        <stop offset="30%" stop-color="rgb(40,130,30)" stop-opacity="0.50"/>
-        <stop offset="70%" stop-color="rgb(35,120,25)" stop-opacity="0.45"/>
-        <stop offset="100%" stop-color="rgb(30,100,20)" stop-opacity="0.35"/>`;
-      opacity = 0.5;
+        <stop offset="0%" stop-color="rgb(50,150,35)" stop-opacity="0.65"/>
+        <stop offset="40%" stop-color="rgb(40,135,28)" stop-opacity="0.60"/>
+        <stop offset="80%" stop-color="rgb(35,120,22)" stop-opacity="0.55"/>
+        <stop offset="100%" stop-color="rgb(30,100,18)" stop-opacity="0.45"/>`;
+      opacity = 0.6;
       break;
     case 'stone':
       baseColor = 'rgb(150,145,140)';
@@ -89,17 +89,20 @@ async function applyGroundTreatmentSharp(
       opacity = 0.45;
   }
 
-  // Build tree exclusion masks (black rectangles where trees are planted)
+  // Build tree exclusion masks (only protect trunk/base area, not full canopy)
   const treeExclusions = treePlacements.map(t => {
-    const treeLeft = Math.max(0, Math.round((t.x - t.width * 0.6) * w));
-    const treeRight = Math.min(w, Math.round((t.x + t.width * 0.6) * w));
+    // Only exclude trunk area (narrow column at base), not full tree width
+    const trunkW = t.width * 0.35; // trunk is ~35% of canopy width
+    const treeLeft = Math.max(0, Math.round((t.x - trunkW / 2) * w));
+    const treeRight = Math.min(w, Math.round((t.x + trunkW / 2) * w));
     const treeBottom = Math.round(t.y * h);
-    const treeTop = Math.max(yStart, treeBottom - Math.round(t.height * h));
+    // Only protect bottom 30% of tree (trunk area touching ground)
+    const protectH = Math.round(t.height * h * 0.3);
+    const treeTop = Math.max(yStart, treeBottom - protectH);
     const pw = treeRight - treeLeft;
     const ph = treeBottom - treeTop;
     if (pw <= 0 || ph <= 0 || treeTop >= yEnd) return '';
-    // Black rectangle with feathered edges to protect tree areas
-    const rx = Math.round(pw * 0.3);
+    const rx = Math.round(pw * 0.4);
     return `<rect x="${treeLeft}" y="${treeTop - yStart}" width="${pw}" height="${ph}" rx="${rx}" fill="black"/>`;
   }).filter(Boolean).join('\n');
 
@@ -109,7 +112,7 @@ async function applyGroundTreatmentSharp(
 
   // Add texture dots for more natural look
   const dots: string[] = [];
-  const dotCount = groundTreatment.type === 'gravel' ? 400 : 200;
+  const dotCount = groundTreatment.type === 'gravel' ? 500 : groundTreatment.type === 'grass' ? 400 : 250;
   for (let i = 0; i < dotCount; i++) {
     const dx = rand() * w;
     const dy = rand() * groundH;
