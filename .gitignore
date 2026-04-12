@@ -29,6 +29,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Test/debug artifacts (generated during development)
+test-*.json
+test-*.jpg
+test-*.png
+debug-*.jpg
+debug-*.png
+ground-*.jpg
+ground-*.png
+
 # Testing
 coverage/
 
@@ -52,3 +61,11 @@ apps/miniapp/dist/
 
 # Private company docs
 *.docx
+
+# Company posters/screenshots (keep in E:\01花木ai\ not in repo)
+浏阳红艺*.png
+红艺花木海报*.png
+腾讯云*.png
+
+# Claude Code worktrees
+.claude/worktrees/
