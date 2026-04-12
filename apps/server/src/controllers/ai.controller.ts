@@ -678,6 +678,15 @@ export async function generatePlanHandler(req: Request, res: Response) {
     console.log(`[GeneratePlan] Total handler time: ${totalMs}ms`);
     recordUsage(phone);
 
+    // Add timing data to response for debugging
+    response._timing = {
+      totalMs,
+      intMs: elapsedAfterInT,
+      outMs: totalMs - elapsedAfterInT,
+      intModel: designPlan?.modelId || 'none',
+      intModelMs: designPlan?.processingMs || 0,
+    };
+
     if (!response.generatedImage && !response.aiAnalysis && !response.analysis) {
       return res.status(500).json({
         success: false,
