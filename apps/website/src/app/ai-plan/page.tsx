@@ -597,15 +597,23 @@ export default function AIPlanPage() {
                         ))}
                     </div>
                   </div>
-                  {/* 需求描述 */}
-                  {form.message && (
-                    <div className="sm:col-span-2 border-t pt-3 mt-2">
-                      <p className="mb-1 text-xs font-medium text-gray-500">需求描述</p>
-                      <p className="text-sm text-gray-700 bg-white rounded-lg border p-2.5">
-                        {form.message}
-                      </p>
+                  {/* 布局方式 + 需求描述 */}
+                  <div className="sm:col-span-2 border-t pt-3 mt-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-medium text-gray-500">布局方式</p>
+                      <span className="inline-flex items-center rounded-full bg-brand-green/10 px-2.5 py-0.5 text-xs font-medium text-brand-green">
+                        {LAYOUT_OPTIONS.find(o => o.key === form.layoutPref)?.label || 'AI智能布局'}
+                      </span>
                     </div>
-                  )}
+                    {form.message && (
+                      <div>
+                        <p className="mb-1 text-xs font-medium text-gray-500">需求描述</p>
+                        <p className="text-sm text-gray-700 bg-white rounded-lg border p-2.5">
+                          {form.message}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
