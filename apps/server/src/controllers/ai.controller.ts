@@ -680,8 +680,8 @@ export async function generatePlanHandler(req: Request, res: Response) {
     console.log(`[GeneratePlan] Total handler time: ${totalMs}ms`);
     recordUsage(phone);
 
-    // Add timing data to response for debugging
-    response._timing = {
+    // Add timing data (for diagnostics, not shown to users)
+    response._debug = {
       totalMs,
       intMs: elapsedAfterInT,
       outMs: totalMs - elapsedAfterInT,
