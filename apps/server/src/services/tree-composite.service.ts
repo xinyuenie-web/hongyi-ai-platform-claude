@@ -396,15 +396,23 @@ export async function compositeTreesOnGarden(options: {
       const cachedCutout = await tryLoadCachedCutout(tree.imageUrl);
 
       if (cachedCutout) {
-        // Cache hit — already cropped and transparent, just resize
-        overlayBuf = await sharp(cachedCutout)
+        // Cache hit — crop bottom 12% to ensure pot/container is fully removed
+        // (older cache entries may have been generated with less aggressive crop)
+        const cachedMeta = await sharp(cachedCutout).metadata();
+        const cachedH = cachedMeta.height || 500;
+        const cachedW = cachedMeta.width || 500;
+        const safeH = Math.round(cachedH * 0.88); // remove bottom 12%
+        const croppedCutout = await sharp(cachedCutout)
+          .extract({ left: 0, top: 0, width: cachedW, height: safeH })
+          .toBuffer();
+        overlayBuf = await sharp(croppedCutout)
           .resize(targetW, targetH, {
             fit: 'contain',
             background: { r: 0, g: 0, b: 0, alpha: 0 },
           })
           .png()
           .toBuffer();
-        console.log(`[TreeComposite] Tree ${idx + 1} using CACHED cutout → ${targetW}x${targetH}`);
+        console.log(`[TreeComposite] Tree ${idx + 1} using CACHED cutout (cropped ${cachedW}x${cachedH}→${cachedW}x${safeH}) → ${targetW}x${targetH}`);
       } else {
         // No cache — use soft-edge fallback IMMEDIATELY (BiRefNet is unreliable from China)
         // BiRefNet is only used by background cutout-cache.service.ts (async, non-blocking)
