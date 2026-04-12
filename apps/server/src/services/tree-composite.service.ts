@@ -131,9 +131,9 @@ function saveCutoutToCache(imageUrl: string, cutoutBuf: Buffer): void {
 async function downloadFalResult(imageUrl: string): Promise<Buffer> {
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  // Try direct download first
+  // Try direct download first (short timeout — if it doesn't work quickly, skip)
   try {
-    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(20000) });
+    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const buf = Buffer.from(await res.arrayBuffer());
       console.log(`[TreeComposite] Direct download: ${buf.length} bytes`);
@@ -148,7 +148,7 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
     try {
       const urlObj = new URL(imageUrl);
       const cdnUrl = `${proxyUrl}/fal-cdn/${urlObj.host}${urlObj.pathname}`;
-      const res = await fetch(cdnUrl, { signal: AbortSignal.timeout(30000) });
+      const res = await fetch(cdnUrl, { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         console.log(`[TreeComposite] Proxy download: ${buf.length} bytes`);
@@ -163,10 +163,11 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
 }
 
 // BiRefNet circuit breaker — skip API calls after repeated failures
+// Aggressive: open after just 1 failure (BiRefNet is consistently unreliable from China)
 let birefnetFailCount = 0;
 let birefnetLastSuccess = 0;
-const BIREFNET_MAX_FAILS = 3;
-const BIREFNET_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown after 3 failures
+const BIREFNET_MAX_FAILS = 1; // Open circuit after just 1 failure (was 3)
+const BIREFNET_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown (was 5 min)
 
 /**
  * Remove background from a tree image using fal.ai BiRefNet.
@@ -208,7 +209,7 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
           'Authorization': `Key ${falKey}`,
         },
         body: JSON.stringify({ image_url: base64 }),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(10000), // 10s timeout (was 20s)
       });
 
       if (!res.ok) {
