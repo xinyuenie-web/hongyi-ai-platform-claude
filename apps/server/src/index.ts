@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { config } from './config/index.js';
 import { connectDatabase } from './config/database.js';
+import { prepareTreeCutoutsBackground } from './services/cutout-cache.service.js';
 
 async function main() {
   await connectDatabase();
@@ -14,6 +15,11 @@ async function main() {
 ║   Env:  ${config.nodeEnv.padEnd(27)}║
 ╚══════════════════════════════════════╝
     `);
+
+    // Generate tree cutouts in background (non-blocking)
+    prepareTreeCutoutsBackground().catch(err => {
+      console.warn('[CutoutCache] Background preparation failed:', err.message);
+    });
   });
 }
 

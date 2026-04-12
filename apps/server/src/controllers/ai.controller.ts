@@ -114,6 +114,17 @@ export async function diagnosticsHandler(_req: Request, res: Response) {
   // Model router health (inT layer)
   results.modelRouter = inT.getModelHealthStatus();
 
+  // Cutout cache status
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const cutoutsDir = path.join(process.cwd(), 'uploads', 'cutouts');
+    const cached = fs.existsSync(cutoutsDir)
+      ? fs.readdirSync(cutoutsDir).filter((f: string) => /^HY\d+\.png$/i.test(f) && fs.statSync(path.join(cutoutsDir, f)).size > 1000).length
+      : 0;
+    results.cutoutCache = { total: 10, cached, missing: 10 - cached, dir: cutoutsDir };
+  } catch {}
+
   const allOk = Object.values(results.checks).every((c: any) => c.status === 'OK' || c.status === 'SKIP');
   results.overall = allOk ? 'ALL_OK' : 'ISSUES_FOUND';
 

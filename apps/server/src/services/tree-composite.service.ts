@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 
+// Cutout cache directories (server-local storage)
+const SERVER_CUTOUTS_DIR = path.join(process.cwd(), 'uploads', 'cutouts');
+const LOCAL_WEBSITE_CUTOUTS_DIR = path.join(process.cwd(), '..', 'website', 'public', 'images', 'trees', 'cutouts');
+
 export interface TreeCompositeItem {
   treeName: string;
   imageUrl: string; // tree cover image URL or path (e.g. /images/trees/HY0001.jpg)
@@ -63,6 +67,42 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
   }
 
   throw new Error(`Unknown image URL format: ${imageUrl}`);
+}
+
+/**
+ * Try to load a pre-processed cutout from cache.
+ * Returns transparent PNG buffer if cached, null otherwise.
+ * Checks local filesystem first, then Docker website service.
+ */
+async function tryLoadCachedCutout(imageUrl: string): Promise<Buffer | null> {
+  // Extract tree ID from URL (e.g. /images/trees/HY0001.jpg → HY0001)
+  const match = imageUrl.match(/\/(HY\d+)\.\w+$/i);
+  if (!match) return null;
+  const treeId = match[1].toUpperCase();
+  const filename = `${treeId}.png`;
+
+  // Check server-local uploads/cutouts directory (Docker persistent volume)
+  const serverPath = path.join(SERVER_CUTOUTS_DIR, filename);
+  if (fs.existsSync(serverPath)) {
+    const stat = fs.statSync(serverPath);
+    if (stat.size > 1000) {
+      console.log(`[TreeComposite] Cache HIT (server): ${treeId} (${(stat.size / 1024).toFixed(0)}KB)`);
+      return fs.readFileSync(serverPath);
+    }
+  }
+
+  // Check website public directory (dev mode)
+  const localPath = path.join(LOCAL_WEBSITE_CUTOUTS_DIR, filename);
+  if (fs.existsSync(localPath)) {
+    const stat = fs.statSync(localPath);
+    if (stat.size > 1000) {
+      console.log(`[TreeComposite] Cache HIT (local): ${treeId} (${(stat.size / 1024).toFixed(0)}KB)`);
+      return fs.readFileSync(localPath);
+    }
+  }
+
+  console.log(`[TreeComposite] Cache MISS: ${treeId}`);
+  return null;
 }
 
 /**
@@ -280,28 +320,44 @@ export async function compositeTreesOnGarden(options: {
 
       let overlayBuf: Buffer;
 
-      try {
-        const cutoutBuf = await removeBackground(treeImgBuf);
-        console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
+      // Step 1: Try cached cutout (pre-processed, instant)
+      const cachedCutout = await tryLoadCachedCutout(tree.imageUrl);
 
-        // Crop bottom 15% to remove pot/container
-        const cutoutMeta = await sharp(cutoutBuf).metadata();
-        const cropH = Math.round(cutoutMeta.height! * 0.85);
-        const croppedCutout = await sharp(cutoutBuf)
-          .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
-          .png()
-          .toBuffer();
-
-        overlayBuf = await sharp(croppedCutout)
+      if (cachedCutout) {
+        // Cache hit — already cropped and transparent, just resize
+        overlayBuf = await sharp(cachedCutout)
           .resize(targetW, targetH, {
             fit: 'contain',
             background: { r: 0, g: 0, b: 0, alpha: 0 },
           })
           .png()
           .toBuffer();
-      } catch (bgErr: any) {
-        console.warn(`[TreeComposite] Tree ${idx + 1} BiRefNet failed: ${bgErr.message}, using soft-edge fallback`);
-        overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
+        console.log(`[TreeComposite] Tree ${idx + 1} using CACHED cutout → ${targetW}x${targetH}`);
+      } else {
+        // Step 2: No cache — fall back to BiRefNet API
+        try {
+          const cutoutBuf = await removeBackground(treeImgBuf);
+          console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
+
+          // Crop bottom 15% to remove pot/container
+          const cutoutMeta = await sharp(cutoutBuf).metadata();
+          const cropH = Math.round(cutoutMeta.height! * 0.85);
+          const croppedCutout = await sharp(cutoutBuf)
+            .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
+            .png()
+            .toBuffer();
+
+          overlayBuf = await sharp(croppedCutout)
+            .resize(targetW, targetH, {
+              fit: 'contain',
+              background: { r: 0, g: 0, b: 0, alpha: 0 },
+            })
+            .png()
+            .toBuffer();
+        } catch (bgErr: any) {
+          console.warn(`[TreeComposite] Tree ${idx + 1} BiRefNet failed: ${bgErr.message}, using soft-edge fallback`);
+          overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
+        }
       }
 
       // Generate shadow
