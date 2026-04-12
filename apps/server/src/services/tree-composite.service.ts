@@ -243,11 +243,15 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Create a clean background-removed version of a tree image.
- * Uses RGB color analysis + saturation detection instead of simple luminance.
- * Product photos have white/light-gray backgrounds with low saturation,
- * while tree foliage (even light green) has higher saturation.
- * This preserves foliage colors that greyscale thresholding would erase.
+ * Create a background-removed version of a tree image.
+ *
+ * HYBRID APPROACH:
+ * 1. Sample corner pixels to determine background type
+ * 2. WHITE background → RGB+saturation color-key removal
+ * 3. NON-WHITE background → center-weighted oval mask with heavy gaussian blur
+ *
+ * Most tree product photos are shot in outdoor nurseries with complex backgrounds,
+ * so the oval mask is the primary fallback. BiRefNet cached cutouts are always preferred.
  */
 async function createSoftEdgeOverlay(
   sharp: any,
@@ -255,31 +259,83 @@ async function createSoftEdgeOverlay(
   targetW: number,
   targetH: number,
 ): Promise<Buffer> {
-  // Step 1: Crop bottom 25% to remove pot/container, then resize
+  // Step 1: Crop bottom 25% to remove pot/container
   const origMeta = await sharp(imageBuffer).metadata();
-  const cropH = Math.round((origMeta.height || 500) * 0.75);
+  const origW = origMeta.width || 500;
+  const origH = origMeta.height || 500;
+  const cropH = Math.round(origH * 0.75);
   const cropped = await sharp(imageBuffer)
-    .extract({ left: 0, top: 0, width: origMeta.width!, height: cropH })
+    .extract({ left: 0, top: 0, width: origW, height: cropH })
     .toBuffer();
 
-  // Step 2: Resize to target with transparent background (contain, not cover)
+  // Step 2: Resize to target
   const resized = await sharp(cropped)
     .resize(targetW, targetH, {
       fit: 'contain',
-      background: { r: 255, g: 255, b: 255, alpha: 0 },
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .ensureAlpha()
     .png()
     .toBuffer();
 
-  // Step 3: Get raw RGBA data for color-based background detection
+  // Step 3: Detect background type by sampling corner pixels
   const rawBuf = await sharp(resized)
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
+  const { data: rgbaData, info } = rawBuf;
+  const w = info.width;
+  const h = info.height;
 
-  const { data: rgbaData, info: rgbaInfo } = rawBuf;
-  const pixelCount = rgbaInfo.width * rgbaInfo.height;
+  // Sample corners (top-left, top-right, bottom-left, bottom-right) — 5x5 areas
+  const cornerSamples: Array<{ r: number; g: number; b: number; a: number }> = [];
+  const sampleSize = 5;
+  const corners = [
+    [0, 0], [w - sampleSize, 0],
+    [0, h - sampleSize], [w - sampleSize, h - sampleSize],
+  ];
+  for (const [cx, cy] of corners) {
+    for (let dy = 0; dy < sampleSize; dy++) {
+      for (let dx = 0; dx < sampleSize; dx++) {
+        const px = Math.min(cx + dx, w - 1);
+        const py = Math.min(cy + dy, h - 1);
+        const idx = (py * w + px) * 4;
+        cornerSamples.push({
+          r: rgbaData[idx], g: rgbaData[idx + 1],
+          b: rgbaData[idx + 2], a: rgbaData[idx + 3],
+        });
+      }
+    }
+  }
+
+  // Check if corners are predominantly white/light (studio photo)
+  const opaqueSamples = cornerSamples.filter(s => s.a > 200);
+  const whiteSamples = opaqueSamples.filter(s => {
+    const brightness = (s.r + s.g + s.b) / 3;
+    const maxC = Math.max(s.r, s.g, s.b);
+    const minC = Math.min(s.r, s.g, s.b);
+    const sat = maxC === 0 ? 0 : (maxC - minC) / maxC;
+    return brightness > 200 && sat < 0.15;
+  });
+  const isWhiteBackground = opaqueSamples.length > 0 &&
+    (whiteSamples.length / opaqueSamples.length) > 0.6;
+
+  console.log(`[TreeComposite] Background detection: ${isWhiteBackground ? 'WHITE' : 'COMPLEX'} (${whiteSamples.length}/${opaqueSamples.length} white corners)`);
+
+  if (isWhiteBackground) {
+    // === WHITE BACKGROUND: color-key removal ===
+    return createColorKeyOverlay(sharp, resized, rgbaData, w, h);
+  } else {
+    // === COMPLEX BACKGROUND: oval vignette mask ===
+    return createOvalMaskOverlay(sharp, resized, w, h);
+  }
+}
+
+/** Color-key removal for white/light backgrounds */
+async function createColorKeyOverlay(
+  sharp: any, resizedBuf: Buffer, rgbaData: Buffer, w: number, h: number,
+): Promise<Buffer> {
+  const pixelCount = w * h;
   const maskData = Buffer.alloc(pixelCount);
 
   for (let i = 0; i < pixelCount; i++) {
@@ -288,81 +344,98 @@ async function createSoftEdgeOverlay(
     const b = rgbaData[i * 4 + 2];
     const a = rgbaData[i * 4 + 3];
 
-    // Already transparent (from contain padding) → keep transparent
-    if (a < 10) {
-      maskData[i] = 0;
-      continue;
-    }
+    if (a < 10) { maskData[i] = 0; continue; }
 
-    // Calculate HSV-style saturation and brightness
     const maxC = Math.max(r, g, b);
     const minC = Math.min(r, g, b);
-    const saturation = maxC === 0 ? 0 : (maxC - minC) / maxC; // 0.0–1.0
-    const brightness = maxC; // 0–255 (V in HSV)
-
-    // Decision logic:
-    // 1. Pure white/near-white background: very bright + very low saturation
-    // 2. Light gray background: bright + low saturation
-    // 3. Colored foliage: any saturation > threshold → keep opaque
-    // 4. Dark pixels (trunk, shadows): always opaque
+    const saturation = maxC === 0 ? 0 : (maxC - minC) / maxC;
+    const brightness = maxC;
 
     if (brightness >= 240 && saturation < 0.06) {
-      // Definite white background
       maskData[i] = 0;
     } else if (brightness >= 220 && saturation < 0.10) {
-      // Near-white, gentle transition
-      const bFade = (brightness - 220) / 35; // 220→255 maps to 0→1
-      const sFade = 1 - saturation / 0.10;   // 0→0.10 maps to 1→0
-      const fadeOut = Math.min(1, bFade * sFade);
-      maskData[i] = Math.round(255 * (1 - fadeOut));
+      const bFade = (brightness - 220) / 35;
+      const sFade = 1 - saturation / 0.10;
+      maskData[i] = Math.round(255 * (1 - Math.min(1, bFade * sFade)));
     } else if (brightness >= 200 && saturation < 0.05) {
-      // Light gray with no color — likely background
       const fade = (brightness - 200) / 55;
       maskData[i] = Math.round(255 * (1 - fade * 0.7));
     } else {
-      // Tree foliage, trunk, or any saturated/dark pixel — keep opaque
       maskData[i] = 255;
     }
   }
 
-  // Step 4: Blur mask for smooth edge feathering (larger radius for natural look)
-  const maskImg = await sharp(maskData, {
-    raw: { width: rgbaInfo.width, height: rgbaInfo.height, channels: 1 },
-  })
-    .blur(2.0)
-    .png()
-    .toBuffer();
+  const maskImg = await sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(2.0).png().toBuffer();
 
-  // Step 5: Apply mask as alpha channel
-  const masked = await sharp(resized)
+  const masked = await sharp(resizedBuf)
     .ensureAlpha()
     .composite([{ input: maskImg, blend: 'dest-in' }])
-    .png()
-    .toBuffer();
+    .png().toBuffer();
 
-  // Step 6: Remove white fringing — desaturate semi-transparent edge pixels
-  // This prevents white halos where the tree meets the garden background
-  const finalRaw = await sharp(masked)
-    .ensureAlpha()
-    .raw()
+  // Suppress white fringe on semi-transparent edges
+  const finalRaw = await sharp(masked).ensureAlpha().raw()
     .toBuffer({ resolveWithObject: true });
-
-  const { data: fData, info: fInfo } = finalRaw;
-  for (let i = 0; i < fInfo.width * fInfo.height; i++) {
-    const fa = fData[i * 4 + 3];
-    // Semi-transparent edge pixels (alpha 10-200): pull RGB toward darker values
-    // to suppress white fringing against any background
+  const { data: fd, info: fi } = finalRaw;
+  for (let i = 0; i < fi.width * fi.height; i++) {
+    const fa = fd[i * 4 + 3];
     if (fa > 10 && fa < 200) {
-      const factor = fa / 255; // 0→1 as opacity increases
-      fData[i * 4]     = Math.round(fData[i * 4]     * (0.5 + 0.5 * factor)); // R
-      fData[i * 4 + 1] = Math.round(fData[i * 4 + 1] * (0.5 + 0.5 * factor)); // G
-      fData[i * 4 + 2] = Math.round(fData[i * 4 + 2] * (0.5 + 0.5 * factor)); // B
+      const f = fa / 255;
+      fd[i * 4]     = Math.round(fd[i * 4]     * (0.5 + 0.5 * f));
+      fd[i * 4 + 1] = Math.round(fd[i * 4 + 1] * (0.5 + 0.5 * f));
+      fd[i * 4 + 2] = Math.round(fd[i * 4 + 2] * (0.5 + 0.5 * f));
+    }
+  }
+  return sharp(fd, { raw: { width: fi.width, height: fi.height, channels: 4 } })
+    .png().toBuffer();
+}
+
+/**
+ * Oval vignette mask for complex (non-white) backgrounds.
+ * Keeps the center 60% fully opaque, fades to transparent at edges.
+ * Uses heavy gaussian blur for natural, seamless blending.
+ */
+async function createOvalMaskOverlay(
+  sharp: any, resizedBuf: Buffer, w: number, h: number,
+): Promise<Buffer> {
+  const cx = w / 2;
+  const cy = h * 0.42; // center slightly above middle (tree crown is usually top-heavy)
+  const rx = w * 0.38;  // horizontal radius: 38% of width
+  const ry = h * 0.46;  // vertical radius: 46% of height (taller than wide)
+
+  const maskData = Buffer.alloc(w * h);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // Normalized distance from center (1.0 = on ellipse boundary)
+      const dx = (x - cx) / rx;
+      const dy = (y - cy) / ry;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      let alpha: number;
+      if (dist <= 0.65) {
+        alpha = 255; // fully opaque core
+      } else if (dist <= 1.0) {
+        // Smooth cosine falloff from 0.65 to 1.0
+        const t = (dist - 0.65) / 0.35;
+        alpha = Math.round(255 * (0.5 + 0.5 * Math.cos(Math.PI * t)));
+      } else {
+        alpha = 0; // fully transparent outside
+      }
+
+      maskData[y * w + x] = alpha;
     }
   }
 
-  return sharp(fData, {
-    raw: { width: fInfo.width, height: fInfo.height, channels: 4 },
-  })
+  // Heavy gaussian blur on the mask for very soft, natural edges
+  const maskImg = await sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(Math.max(3, Math.round(Math.min(w, h) * 0.04))) // 4% of image size, min 3px
+    .png()
+    .toBuffer();
+
+  return sharp(resizedBuf)
+    .ensureAlpha()
+    .composite([{ input: maskImg, blend: 'dest-in' }])
     .png()
     .toBuffer();
 }
