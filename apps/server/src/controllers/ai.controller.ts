@@ -663,6 +663,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
               ),
             ]);
             response.generatedImage = outResult.imageUrl;
+            response._outTiming = outResult._outTiming;
             console.log(`[GeneratePlan] ouT fallback succeeded: ${outResult.treeCount} trees`);
           } catch (outErr: any) {
             console.error('[GeneratePlan] ouT fallback failed:', outErr.message);

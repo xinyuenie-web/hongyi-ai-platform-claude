@@ -1,5 +1,6 @@
 /**
  * Model Router — selects the best available AI model with health checks and automatic fallback.
+ * PARALLEL RACING: Qwen + Doubao race simultaneously, first response wins.
  * Core of the inT tool's competitive advantage: multi-model routing with China-specific optimization.
  */
 import type { ModelAdapter, VisionInput, VisionOutput } from './adapters/base-adapter.js';
@@ -52,24 +53,24 @@ function markUnhealthy(id: string, error: string) {
 function isCircuitOpen(id: string): boolean {
   const status = getHealthStatus(id);
   if (status.consecutiveFailures < CIRCUIT_BREAKER_THRESHOLD) return false;
-  // Check cooldown
   if (Date.now() - status.lastCheck > CIRCUIT_BREAKER_COOLDOWN_MS) {
     console.log(`[ModelRouter] Circuit breaker HALF-OPEN for ${id} (cooldown expired)`);
-    return false; // allow retry
+    return false;
   }
   return true;
 }
 
-// Global time budget for the entire routing process — prevents cascading timeouts
-// Must be long enough for at least 1 model to succeed (Qwen needs ~15-25s, Doubao ~20-35s)
-const TOTAL_ROUTING_BUDGET_MS = Number(process.env.INT_TOTAL_BUDGET_MS) || 65000; // 65s max — enough for Qwen(35s) + Doubao fallback(30s remaining)
+// Overall timeout for the entire routing process
+const TOTAL_ROUTING_TIMEOUT_MS = Number(process.env.INT_TOTAL_BUDGET_MS) || 40000; // 40s max
+
+type RoutingResult = VisionOutput & { modelId: string; processingMs: number };
 
 /**
- * Select and call the best available vision model.
- * Tries models in priority order, with automatic fallback on failure.
- * Enforces a TOTAL time budget to prevent cascading timeouts (e.g., 30s + 45s = 75s).
+ * Race all available models in parallel — first successful response wins.
+ * This eliminates cascading timeouts (e.g., Qwen 35s + Doubao 40s = 75s sequential).
+ * With parallel racing, worst case = max(individual timeout) ≈ 35-40s.
  */
-export async function routeVisionRequest(input: VisionInput): Promise<VisionOutput & { modelId: string; processingMs: number }> {
+export async function routeVisionRequest(input: VisionInput): Promise<RoutingResult> {
   const configs = getVisionModelConfigs();
   const enabledModels = configs.filter(c => c.enabled);
 
@@ -77,77 +78,77 @@ export async function routeVisionRequest(input: VisionInput): Promise<VisionOutp
     throw new Error('No vision models configured. Set DASHSCOPE_API_KEY or DOUBAO_VISION_API_KEY.');
   }
 
-  const errors: Array<{ modelId: string; error: string }> = [];
   const routingStart = Date.now();
 
+  // Build list of candidate models that can be tried
+  const candidates: Array<{ config: typeof enabledModels[0]; adapter: ModelAdapter }> = [];
   for (const config of enabledModels) {
-    // Check global time budget before trying next model
-    const elapsed = Date.now() - routingStart;
-    const remaining = TOTAL_ROUTING_BUDGET_MS - elapsed;
-    if (remaining < 3000) {
-      console.warn(`[ModelRouter] Time budget exhausted (${elapsed}ms used of ${TOTAL_ROUTING_BUDGET_MS}ms), stopping`);
-      errors.push({ modelId: config.id, error: `time budget exhausted (${elapsed}ms)` });
-      break;
-    }
-
-    // Skip if circuit breaker is open
     if (isCircuitOpen(config.id)) {
       console.log(`[ModelRouter] Skipping ${config.id} (circuit breaker open)`);
-      errors.push({ modelId: config.id, error: 'circuit breaker open' });
       continue;
     }
-
-    // Skip proxy-requiring models if no proxy configured
     if (config.requiresProxy && !process.env.FAL_PROXY_URL) {
       console.log(`[ModelRouter] Skipping ${config.id} (requires proxy, none configured)`);
-      errors.push({ modelId: config.id, error: 'requires proxy' });
       continue;
     }
+    const factory = ADAPTER_MAP[config.id];
+    if (!factory) continue;
+    const adapter = factory();
+    candidates.push({ config, adapter });
+  }
 
-    const adapterFactory = ADAPTER_MAP[config.id];
-    if (!adapterFactory) {
-      console.warn(`[ModelRouter] No adapter for ${config.id}`);
-      continue;
-    }
+  if (candidates.length === 0) {
+    throw new Error('No available vision models (all circuit breakers open or misconfigured)');
+  }
 
-    const adapter = adapterFactory();
+  console.log(`[ModelRouter] Racing ${candidates.length} models in parallel: ${candidates.map(c => c.config.id).join(', ')}`);
+
+  // Race all candidates in parallel
+  const racePromises = candidates.map(async ({ config, adapter }): Promise<RoutingResult> => {
     const t0 = Date.now();
-
     try {
-      // Quick health check
       const healthy = await adapter.healthCheck();
-      if (!healthy) {
-        errors.push({ modelId: config.id, error: 'health check failed' });
-        continue;
-      }
+      if (!healthy) throw new Error('health check failed');
 
-      console.log(`[ModelRouter] Trying ${adapter.displayName} (priority ${config.priority}, budget remaining: ${remaining}ms)...`);
-
-      // Race the adapter against remaining time budget
-      const result = await Promise.race([
-        adapter.analyze(input),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`routing budget exceeded (${remaining}ms)`)), remaining)
-        ),
-      ]);
+      console.log(`[ModelRouter] ${adapter.displayName} starting analysis...`);
+      const result = await adapter.analyze(input);
       const processingMs = Date.now() - t0;
 
       markHealthy(config.id);
-      console.log(`[ModelRouter] ${adapter.displayName} succeeded in ${processingMs}ms`);
-
+      console.log(`[ModelRouter] ${adapter.displayName} SUCCEEDED in ${processingMs}ms`);
       return { ...result, modelId: config.id, processingMs };
     } catch (err: any) {
       const processingMs = Date.now() - t0;
       const errMsg = err.message || String(err);
-      console.error(`[ModelRouter] ${config.id} failed in ${processingMs}ms: ${errMsg}`);
+      console.warn(`[ModelRouter] ${config.id} FAILED in ${processingMs}ms: ${errMsg}`);
       markUnhealthy(config.id, errMsg);
-      errors.push({ modelId: config.id, error: errMsg });
+      throw err; // re-throw so Promise.any skips this
     }
-  }
+  });
 
-  const totalMs = Date.now() - routingStart;
-  const errorSummary = errors.map(e => `${e.modelId}: ${e.error}`).join('; ');
-  throw new Error(`All vision models failed in ${totalMs}ms: ${errorSummary}`);
+  // Add overall timeout
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`routing timeout (${TOTAL_ROUTING_TIMEOUT_MS}ms)`)), TOTAL_ROUTING_TIMEOUT_MS)
+  );
+
+  try {
+    // Promise.any resolves with the FIRST successful result, ignoring failures
+    const result = await Promise.race([
+      Promise.any(racePromises),
+      timeoutPromise,
+    ]);
+    const totalMs = Date.now() - routingStart;
+    console.log(`[ModelRouter] Parallel racing completed in ${totalMs}ms, winner: ${result.modelId}`);
+    return result;
+  } catch (err: any) {
+    const totalMs = Date.now() - routingStart;
+    // If Promise.any rejects, ALL models failed
+    if (err instanceof AggregateError) {
+      const errors = err.errors.map((e: any, i: number) => `${candidates[i]?.config.id || '?'}: ${e.message}`).join('; ');
+      throw new Error(`All ${candidates.length} models failed in ${totalMs}ms: ${errors}`);
+    }
+    throw new Error(`Model routing failed in ${totalMs}ms: ${err.message}`);
+  }
 }
 
 /** Get health status of all configured models (for diagnostics endpoint) */
