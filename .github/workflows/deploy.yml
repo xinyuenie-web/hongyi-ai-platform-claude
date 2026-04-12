@@ -58,11 +58,14 @@ jobs:
             curl -fsSL https://get.docker.com | sh
             systemctl start docker
             systemctl enable docker
-            mkdir -p /etc/docker
-            echo '{"registry-mirrors":["https://docker.xuanyuan.me"],"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
-            systemctl daemon-reload
-            systemctl restart docker
           fi
+
+          # Always update Docker mirror config (fix stale/broken mirrors)
+          mkdir -p /etc/docker
+          echo '{"registry-mirrors":["https://docker.xuanyuan.me","https://hub-mirror.c.163.com","https://docker.m.daocloud.io"],"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+          systemctl daemon-reload
+          systemctl restart docker
+          sleep 3
 
           # Clone or pull
           if [ ! -d "$PROJECT_DIR/.git" ]; then
