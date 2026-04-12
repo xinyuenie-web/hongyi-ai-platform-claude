@@ -3,7 +3,8 @@
 # ============================================================
 
 # --- Stage 1: Build ---
-FROM node:20-alpine AS builder
+ARG BASE_IMAGE=node:20-alpine
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -30,7 +31,8 @@ RUN cd packages/shared && npx tsc || true
 RUN cd apps/server && npx tsc || true
 
 # --- Stage 2: Production ---
-FROM node:20-alpine AS runner
+ARG BASE_IMAGE=node:20-alpine
+FROM ${BASE_IMAGE} AS runner
 
 WORKDIR /app
 

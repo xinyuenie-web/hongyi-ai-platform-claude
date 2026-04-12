@@ -4,7 +4,8 @@
 # ============================================================
 
 # --- Stage 1: Install & Build ---
-FROM node:20-alpine AS builder
+ARG BASE_IMAGE=node:20-alpine
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -28,7 +29,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN cd apps/website && npx next build
 
 # --- Stage 2: Production Runner ---
-FROM node:20-alpine AS runner
+ARG BASE_IMAGE=node:20-alpine
+FROM ${BASE_IMAGE} AS runner
 
 WORKDIR /app
 

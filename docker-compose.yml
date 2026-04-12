@@ -31,6 +31,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
+      args:
+        - BASE_IMAGE=${BASE_IMAGE:-node:20-alpine}
     container_name: hongyi-server
     restart: unless-stopped
     environment:
@@ -60,6 +62,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.website
       args:
+        - BASE_IMAGE=${BASE_IMAGE:-node:20-alpine}
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
     container_name: hongyi-website
     restart: unless-stopped
