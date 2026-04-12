@@ -526,7 +526,7 @@ export default function AIPlanPage() {
                       <p>3. 铺设地面效果...</p>
                     ) : null}
                   </div>
-                  <p className="mt-3 text-xs text-gray-300">预计需要30-60秒，请耐心等待</p>
+                  <p className="mt-3 text-xs text-gray-300">预计需要15-30秒，请耐心等待</p>
                 </div>
               ) : (
                 <button
