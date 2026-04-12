@@ -569,7 +569,11 @@ export async function generatePlanHandler(req: Request, res: Response) {
     // ============================================================
     // STEP 1: inT — Input Transformer (AI vision + layout preferences)
     // Run in parallel with rule-based analysis as fallback
+    // Overall handler timeout: 80s — return whatever we have
     // ============================================================
+    const handlerStart = Date.now();
+    const HANDLER_TIMEOUT_MS = 80000; // 80s max for entire handler
+
     const analysisMessage = message || `${styleName}风格庭院，选择了${selectedTrees.map((t: any) => t.name).join('、')}`;
 
     const [intResult, ruleResult] = await Promise.allSettled([
@@ -614,39 +618,62 @@ export async function generatePlanHandler(req: Request, res: Response) {
       response.analysis = ruleResult.value;
     }
 
+    // Check time budget before ouT
+    const elapsedAfterInT = Date.now() - handlerStart;
+    const remainingBudget = HANDLER_TIMEOUT_MS - elapsedAfterInT;
+    console.log(`[GeneratePlan] inT phase took ${elapsedAfterInT}ms, remaining budget: ${remainingBudget}ms`);
+
     // ============================================================
     // STEP 2: ouT — Output Transformer (BiRefNet + Sharp compositing)
+    // Only proceed if we have enough time budget remaining (>5s)
     // ============================================================
-    if (designPlan && process.env.FAL_KEY) {
-      try {
-        const outResult = await ouT.transform({
-          gardenPhotoPath: gardenPhoto.path,
-          designPlan,
-        });
-        response.generatedImage = outResult.imageUrl;
-        console.log(`[GeneratePlan] ouT succeeded: ${outResult.strategy}, ${outResult.treeCount} trees, ${outResult.processingMs}ms`);
-      } catch (outErr: any) {
-        console.error('[GeneratePlan] ouT failed:', outErr.message);
-        response.imageError = outErr.message;
-      }
-    } else if (!designPlan) {
-      // Fallback: no AI analysis, use default placements with ouT
-      const fallbackPlan = buildFallbackDesignPlan(selectedTrees as any[]);
-      if (process.env.FAL_KEY) {
+    if (remainingBudget > 5000) {
+      if (designPlan && process.env.FAL_KEY) {
         try {
-          const outResult = await ouT.transform({
-            gardenPhotoPath: gardenPhoto.path,
-            designPlan: fallbackPlan,
-          });
+          const outResult = await Promise.race([
+            ouT.transform({
+              gardenPhotoPath: gardenPhoto.path,
+              designPlan,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`ouT timeout after ${remainingBudget}ms`)), remainingBudget - 2000)
+            ),
+          ]);
           response.generatedImage = outResult.imageUrl;
-          console.log(`[GeneratePlan] ouT fallback succeeded: ${outResult.treeCount} trees`);
+          console.log(`[GeneratePlan] ouT succeeded: ${outResult.strategy}, ${outResult.treeCount} trees, ${outResult.processingMs}ms`);
         } catch (outErr: any) {
-          console.error('[GeneratePlan] ouT fallback failed:', outErr.message);
+          console.error('[GeneratePlan] ouT failed:', outErr.message);
           response.imageError = outErr.message;
         }
+      } else if (!designPlan) {
+        // Fallback: no AI analysis, use default placements with ouT
+        const fallbackPlan = buildFallbackDesignPlan(selectedTrees as any[]);
+        if (process.env.FAL_KEY) {
+          try {
+            const outResult = await Promise.race([
+              ouT.transform({
+                gardenPhotoPath: gardenPhoto.path,
+                designPlan: fallbackPlan,
+              }),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`ouT fallback timeout`)), remainingBudget - 2000)
+              ),
+            ]);
+            response.generatedImage = outResult.imageUrl;
+            console.log(`[GeneratePlan] ouT fallback succeeded: ${outResult.treeCount} trees`);
+          } catch (outErr: any) {
+            console.error('[GeneratePlan] ouT fallback failed:', outErr.message);
+            response.imageError = outErr.message;
+          }
+        }
       }
+    } else {
+      console.warn(`[GeneratePlan] Skipping ouT — only ${remainingBudget}ms remaining`);
+      response.imageError = 'Time budget exceeded, image generation skipped';
     }
 
+    const totalMs = Date.now() - handlerStart;
+    console.log(`[GeneratePlan] Total handler time: ${totalMs}ms`);
     recordUsage(phone);
 
     if (!response.generatedImage && !response.aiAnalysis && !response.analysis) {

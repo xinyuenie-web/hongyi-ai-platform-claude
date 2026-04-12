@@ -60,9 +60,13 @@ function isCircuitOpen(id: string): boolean {
   return true;
 }
 
+// Global time budget for the entire routing process — prevents cascading timeouts
+const TOTAL_ROUTING_BUDGET_MS = Number(process.env.INT_TOTAL_BUDGET_MS) || 35000; // 35s max across all models
+
 /**
  * Select and call the best available vision model.
  * Tries models in priority order, with automatic fallback on failure.
+ * Enforces a TOTAL time budget to prevent cascading timeouts (e.g., 30s + 45s = 75s).
  */
 export async function routeVisionRequest(input: VisionInput): Promise<VisionOutput & { modelId: string; processingMs: number }> {
   const configs = getVisionModelConfigs();
@@ -73,8 +77,18 @@ export async function routeVisionRequest(input: VisionInput): Promise<VisionOutp
   }
 
   const errors: Array<{ modelId: string; error: string }> = [];
+  const routingStart = Date.now();
 
   for (const config of enabledModels) {
+    // Check global time budget before trying next model
+    const elapsed = Date.now() - routingStart;
+    const remaining = TOTAL_ROUTING_BUDGET_MS - elapsed;
+    if (remaining < 3000) {
+      console.warn(`[ModelRouter] Time budget exhausted (${elapsed}ms used of ${TOTAL_ROUTING_BUDGET_MS}ms), stopping`);
+      errors.push({ modelId: config.id, error: `time budget exhausted (${elapsed}ms)` });
+      break;
+    }
+
     // Skip if circuit breaker is open
     if (isCircuitOpen(config.id)) {
       console.log(`[ModelRouter] Skipping ${config.id} (circuit breaker open)`);
@@ -106,8 +120,15 @@ export async function routeVisionRequest(input: VisionInput): Promise<VisionOutp
         continue;
       }
 
-      console.log(`[ModelRouter] Trying ${adapter.displayName} (priority ${config.priority})...`);
-      const result = await adapter.analyze(input);
+      console.log(`[ModelRouter] Trying ${adapter.displayName} (priority ${config.priority}, budget remaining: ${remaining}ms)...`);
+
+      // Race the adapter against remaining time budget
+      const result = await Promise.race([
+        adapter.analyze(input),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`routing budget exceeded (${remaining}ms)`)), remaining)
+        ),
+      ]);
       const processingMs = Date.now() - t0;
 
       markHealthy(config.id);
@@ -123,8 +144,9 @@ export async function routeVisionRequest(input: VisionInput): Promise<VisionOutp
     }
   }
 
+  const totalMs = Date.now() - routingStart;
   const errorSummary = errors.map(e => `${e.modelId}: ${e.error}`).join('; ');
-  throw new Error(`All vision models failed: ${errorSummary}`);
+  throw new Error(`All vision models failed in ${totalMs}ms: ${errorSummary}`);
 }
 
 /** Get health status of all configured models (for diagnostics endpoint) */

@@ -223,12 +223,23 @@ export async function generateAIPlan(data: {
   formData.append('message', data.message);
 
   const url = `${getApiBase()}/api/v1/ai/generate-plan`;
-  const res = await fetch(url, { method: 'POST', body: formData });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: { message: 'AI方案生成失败' } }));
-    return { success: false, error: error.error || { code: 'AI_ERROR', message: 'AI方案生成失败' } };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s frontend timeout
+  try {
+    const res = await fetch(url, { method: 'POST', body: formData, signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: { message: 'AI方案生成失败' } }));
+      return { success: false, error: error.error || { code: 'AI_ERROR', message: 'AI方案生成失败' } };
+    }
+    return res.json();
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return { success: false, error: { code: 'TIMEOUT', message: 'AI生成超时，请重试。建议减少树木数量或更换照片。' } };
+    }
+    throw err;
   }
-  return res.json();
 }
 
 /** Submit inquiry with optional photo uploads */

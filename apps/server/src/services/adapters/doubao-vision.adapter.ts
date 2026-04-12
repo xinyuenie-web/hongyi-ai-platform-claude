@@ -47,7 +47,7 @@ export class DoubaoVisionAdapter implements ModelAdapter {
       temperature: 0.7,
     };
 
-    const timeout = Number(process.env.INT_MAX_TIMEOUT_MS) || 45000;
+    const timeout = Number(process.env.INT_MAX_TIMEOUT_MS) || 25000;
     console.log(`[Doubao] Calling ${this.model} with ${input.trees.length} trees...`);
     const t0 = Date.now();
 
