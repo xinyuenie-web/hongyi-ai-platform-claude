@@ -3,14 +3,42 @@ node_modules
 dist
 .git
 .github
+.claude
 *.tar.gz
 *.log
+*.png
+*.docx
+
+# Test/debug files
+test-*
+debug-*
+ground-*
+
+# Material folders
 202604091400新增信息
 素材*
-apps/miniapp/dist
-apps/miniapp/node_modules
+
+# Miniapp
+apps/miniapp
+
+# Uploads (runtime data, not build input)
 uploads/inquiries/*
 !uploads/inquiries/.gitkeep
+
+# Deploy scripts (not needed in Docker)
+deploy/
+scripts/
+
+# Environment files
+.env
 .env.local
+.env.*
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Docs
+README.md
+*.md
+!packages/*/README.md

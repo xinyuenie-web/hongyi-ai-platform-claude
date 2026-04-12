@@ -1,5 +1,6 @@
 # ============================================================
 # 红艺花木 - Express API Server
+# Optimized: package.json copied first for npm ci layer caching
 # ============================================================
 
 # --- Stage 1: Build ---
@@ -11,18 +12,18 @@ WORKDIR /app
 # Use China npm mirror for reliability
 RUN npm config set registry https://registry.npmmirror.com
 
-# Copy workspace root files
+# Step 1: Copy ONLY dependency files (cache npm ci when deps don't change)
 COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/server/package.json apps/server/
 
-# Copy shared package
-COPY packages/shared/ packages/shared/
-
-# Copy server package
-COPY apps/server/ apps/server/
-
-# Install all dependencies (including devDeps for build)
+# Step 2: Install dependencies (this layer is cached if package*.json unchanged)
 RUN npm ci --workspace=packages/shared --workspace=apps/server --include-workspace-root 2>/dev/null || \
     npm install --workspace=packages/shared --workspace=apps/server --include-workspace-root
+
+# Step 3: Copy source code (changes frequently, but npm ci is already cached)
+COPY packages/shared/ packages/shared/
+COPY apps/server/ apps/server/
 
 # Build shared package
 RUN cd packages/shared && npx tsc || true

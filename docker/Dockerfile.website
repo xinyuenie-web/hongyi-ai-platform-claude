@@ -1,6 +1,7 @@
 # ============================================================
 # 红艺花木 - Next.js Website
 # Multi-stage build with standalone output
+# Optimized: package.json copied first for npm ci layer caching
 # ============================================================
 
 # --- Stage 1: Install & Build ---
@@ -9,17 +10,20 @@ FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
 
-# Copy workspace root files
+# Use China npm mirror for reliability
+RUN npm config set registry https://registry.npmmirror.com
+
+# Step 1: Copy ONLY dependency files (cache npm ci when deps don't change)
 COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/website/package.json apps/website/
 
-# Copy shared package
-COPY packages/shared/ packages/shared/
-
-# Copy website package
-COPY apps/website/ apps/website/
-
-# Install all dependencies
+# Step 2: Install dependencies (this layer is cached if package*.json unchanged)
 RUN npm ci --workspace=packages/shared --workspace=apps/website --include-workspace-root
+
+# Step 3: Copy source code (changes frequently, but npm ci is already cached)
+COPY packages/shared/ packages/shared/
+COPY apps/website/ apps/website/
 
 # Build shared
 RUN cd packages/shared && npx tsc
