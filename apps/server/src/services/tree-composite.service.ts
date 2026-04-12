@@ -113,12 +113,13 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
   const base64 = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
   const proxyUrl = process.env.FAL_PROXY_URL;
 
-  // Proxy first — server is in China, direct fal.run may be blocked or rate-limited
-  const endpoints: Array<{ name: string; url: string }> = [];
+  // Direct first (faster), proxy as fallback (China may block fal.ai intermittently)
+  const endpoints: Array<{ name: string; url: string }> = [
+    { name: 'direct', url: 'https://fal.run/fal-ai/birefnet' },
+  ];
   if (proxyUrl) {
     endpoints.push({ name: 'proxy', url: `${proxyUrl}/fal-sync/fal-ai/birefnet` });
   }
-  endpoints.push({ name: 'direct', url: 'https://fal.run/fal-ai/birefnet' });
 
   for (const ep of endpoints) {
     try {
@@ -130,7 +131,7 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
           'Authorization': `Key ${falKey}`,
         },
         body: JSON.stringify({ image_url: base64 }),
-        signal: AbortSignal.timeout(90000),
+        signal: AbortSignal.timeout(45000),
       });
 
       if (!res.ok) {
@@ -254,33 +255,24 @@ export async function compositeTreesOnGarden(options: {
   // Sort trees by y coordinate (ascending) — far trees first, near trees on top
   const sortedTrees = [...options.trees].sort((a, b) => a.y - b.y);
 
-  // 2. Process trees SEQUENTIALLY (avoids BiRefNet rate limiting)
+  // 2. Process ALL trees in PARALLEL (critical for speed — each BiRefNet call takes 15-45s)
+  console.log(`[TreeComposite] Processing ${sortedTrees.length} trees in PARALLEL...`);
   const overlays: Array<{ input: Buffer; left: number; top: number; y: number }> = [];
 
-  for (let idx = 0; idx < sortedTrees.length; idx++) {
-    const tree = sortedTrees[idx];
-    console.log(`[TreeComposite] Tree ${idx + 1}/${sortedTrees.length}: ${tree.treeName} (${tree.imageUrl})`);
-
-    // Delay between BiRefNet API calls to avoid rate limiting
-    if (idx > 0) {
-      console.log(`[TreeComposite] Waiting 2s before next BiRefNet call...`);
-      await new Promise(r => setTimeout(r, 2000));
-    }
-
+  async function processOneTree(tree: TreeCompositeItem, idx: number): Promise<Array<{ input: Buffer; left: number; top: number; y: number }>> {
+    const results: Array<{ input: Buffer; left: number; top: number; y: number }> = [];
     try {
-      // Read tree image
       const treeImgBuf = await readTreeImage(tree.imageUrl);
       console.log(`[TreeComposite] Tree ${idx + 1} image: ${treeImgBuf.length} bytes`);
 
       // Perspective scaling: trees further away (smaller y) appear slightly smaller
-      const perspectiveScale = 0.75 + (tree.y - 0.5) * 0.5; // y=0.5→75%, y=1.0→100%
+      const perspectiveScale = 0.75 + (tree.y - 0.5) * 0.5;
       const clampedScale = Math.max(0.7, Math.min(1.0, perspectiveScale));
 
-      // Calculate target dimensions with perspective
-      const rawW = Math.max(40, Math.round(tree.width * baseW));
-      const rawH = Math.max(60, Math.round(tree.height * baseH));
-      const targetW = Math.round(rawW * clampedScale);
-      const targetH = Math.round(rawH * clampedScale);
+      const rawTreeW = Math.max(40, Math.round(tree.width * baseW));
+      const rawTreeH = Math.max(60, Math.round(tree.height * baseH));
+      const targetW = Math.round(rawTreeW * clampedScale);
+      const targetH = Math.round(rawTreeH * clampedScale);
 
       // Position: x is center of tree, y is bottom of tree (ground level)
       const targetX = Math.max(0, Math.min(baseW - targetW, Math.round(tree.x * baseW - targetW / 2)));
@@ -288,7 +280,6 @@ export async function compositeTreesOnGarden(options: {
 
       let overlayBuf: Buffer;
 
-      // Try BiRefNet background removal
       try {
         const cutoutBuf = await removeBackground(treeImgBuf);
         console.log(`[TreeComposite] Tree ${idx + 1} BiRefNet cutout: ${cutoutBuf.length} bytes`);
@@ -300,9 +291,7 @@ export async function compositeTreesOnGarden(options: {
           .extract({ left: 0, top: 0, width: cutoutMeta.width!, height: cropH })
           .png()
           .toBuffer();
-        console.log(`[TreeComposite] Tree ${idx + 1} pot cropped: ${cutoutMeta.height}→${cropH}px`);
 
-        // Resize cropped cutout to target dimensions
         overlayBuf = await sharp(croppedCutout)
           .resize(targetW, targetH, {
             fit: 'contain',
@@ -311,12 +300,11 @@ export async function compositeTreesOnGarden(options: {
           .png()
           .toBuffer();
       } catch (bgErr: any) {
-        // Fallback: soft-edge overlay (still shows the tree, just with blended edges)
         console.warn(`[TreeComposite] Tree ${idx + 1} BiRefNet failed: ${bgErr.message}, using soft-edge fallback`);
         overlayBuf = await createSoftEdgeOverlay(sharp, treeImgBuf, targetW, targetH);
       }
 
-      // Generate shadow (elliptical, semi-transparent, below tree)
+      // Generate shadow
       const shadowW = Math.round(targetW * 0.6);
       const shadowH = Math.round(shadowW * 0.2);
       const shadowX = Math.max(0, Math.min(baseW - shadowW, targetX + Math.round((targetW - shadowW) / 2)));
@@ -324,23 +312,30 @@ export async function compositeTreesOnGarden(options: {
       const shadowSvg = Buffer.from(
         `<svg width="${shadowW}" height="${shadowH}">
           <defs>
-            <radialGradient id="sg" cx="50%" cy="50%" rx="50%" ry="50%">
+            <radialGradient id="sg${idx}" cx="50%" cy="50%" rx="50%" ry="50%">
               <stop offset="0%" stop-color="black" stop-opacity="0.25"/>
               <stop offset="100%" stop-color="black" stop-opacity="0"/>
             </radialGradient>
           </defs>
-          <ellipse cx="${shadowW / 2}" cy="${shadowH / 2}" rx="${shadowW / 2}" ry="${shadowH / 2}" fill="url(#sg)"/>
+          <ellipse cx="${shadowW / 2}" cy="${shadowH / 2}" rx="${shadowW / 2}" ry="${shadowH / 2}" fill="url(#sg${idx})"/>
         </svg>`,
       );
       const shadowBuf = await sharp(shadowSvg).png().toBuffer();
 
-      // Shadow first (behind tree), then tree on top
-      overlays.push({ input: shadowBuf, left: shadowX, top: shadowY, y: tree.y - 0.001 });
+      results.push({ input: shadowBuf, left: shadowX, top: shadowY, y: tree.y - 0.001 });
       console.log(`[TreeComposite] Tree ${idx + 1} overlay: ${targetW}x${targetH} at (${targetX},${targetY}) scale=${clampedScale.toFixed(2)}`);
-      overlays.push({ input: overlayBuf, left: targetX, top: targetY, y: tree.y });
+      results.push({ input: overlayBuf, left: targetX, top: targetY, y: tree.y });
     } catch (err: any) {
-      console.error(`[TreeComposite] Tree ${idx + 1} (${tree.treeName}) FAILED entirely: ${err.message}`);
+      console.error(`[TreeComposite] Tree ${idx + 1} (${tree.treeName}) FAILED: ${err.message}`);
     }
+    return results;
+  }
+
+  const treeResults = await Promise.all(
+    sortedTrees.map((tree, idx) => processOneTree(tree, idx))
+  );
+  for (const r of treeResults) {
+    overlays.push(...r);
   }
 
   if (overlays.length === 0) {
