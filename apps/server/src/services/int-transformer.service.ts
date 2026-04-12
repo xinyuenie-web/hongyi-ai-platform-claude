@@ -312,7 +312,44 @@ function matchAndEnrichPlacements(
     });
   }
 
-  return placements.slice(0, 5);
+  // Resolve overlaps: push overlapping trees apart
+  return resolveOverlaps(placements.slice(0, 5));
+}
+
+/**
+ * Detect and resolve overlapping tree placements.
+ * If two trees overlap horizontally, push them apart symmetrically.
+ */
+function resolveOverlaps(placements: DesignPlan['placements']): DesignPlan['placements'] {
+  if (placements.length < 2) return placements;
+
+  const MIN_GAP = 0.05; // Minimum horizontal gap between tree edges
+  const result = [...placements];
+
+  // Sort by x for easier overlap detection
+  result.sort((a, b) => a.x - b.x);
+
+  for (let i = 0; i < result.length - 1; i++) {
+    for (let j = i + 1; j < result.length; j++) {
+      const a = result[i];
+      const b = result[j];
+
+      // Check horizontal overlap: tree edges = [x - width/2, x + width/2]
+      const aRight = a.x + a.width / 2;
+      const bLeft = b.x - b.width / 2;
+      const overlap = aRight + MIN_GAP - bLeft;
+
+      if (overlap > 0) {
+        // Push apart symmetrically
+        const shift = overlap / 2 + 0.02;
+        result[i] = { ...a, x: Math.max(0.08, a.x - shift) };
+        result[j] = { ...b, x: Math.min(0.92, b.x + shift) };
+        console.log(`[inT] Overlap resolved: ${a.treeName}(x=${a.x.toFixed(2)}) ↔ ${b.treeName}(x=${b.x.toFixed(2)}) → ${result[i].x.toFixed(2)} / ${result[j].x.toFixed(2)}`);
+      }
+    }
+  }
+
+  return result;
 }
 
 function findTreeByName(aiName: string, trees: IntInput['selectedTrees']) {

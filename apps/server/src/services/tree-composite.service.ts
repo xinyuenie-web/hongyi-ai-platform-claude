@@ -167,8 +167,8 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
 // Aggressive: open after just 1 failure (BiRefNet is consistently unreliable from China)
 let birefnetFailCount = 0;
 let birefnetLastSuccess = 0;
-const BIREFNET_MAX_FAILS = 1; // Open circuit after just 1 failure (was 3)
-const BIREFNET_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown (was 5 min)
+const BIREFNET_MAX_FAILS = 3; // Open circuit after 3 failures (was 1 — too aggressive)
+const BIREFNET_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown
 
 /**
  * Remove background from a tree image using fal.ai BiRefNet.
@@ -399,9 +399,9 @@ async function createOvalMaskOverlay(
   sharp: any, resizedBuf: Buffer, w: number, h: number,
 ): Promise<Buffer> {
   const cx = w / 2;
-  const cy = h * 0.42; // center slightly above middle (tree crown is usually top-heavy)
-  const rx = w * 0.38;  // horizontal radius: 38% of width
-  const ry = h * 0.46;  // vertical radius: 46% of height (taller than wide)
+  const cy = h * 0.40; // center slightly above middle (tree crown is usually top-heavy)
+  const rx = w * 0.30;  // horizontal radius: 30% of width (was 38% — tighter to cut more background)
+  const ry = h * 0.40;  // vertical radius: 40% of height (was 46% — tighter)
 
   const maskData = Buffer.alloc(w * h);
 
@@ -413,11 +413,11 @@ async function createOvalMaskOverlay(
       const dist = Math.sqrt(dx * dx + dy * dy);
 
       let alpha: number;
-      if (dist <= 0.65) {
-        alpha = 255; // fully opaque core
-      } else if (dist <= 1.0) {
-        // Smooth cosine falloff from 0.65 to 1.0
-        const t = (dist - 0.65) / 0.35;
+      if (dist <= 0.50) {
+        alpha = 255; // fully opaque core (was 0.65 — tighter core)
+      } else if (dist <= 0.85) {
+        // Steep cosine falloff from 0.50 to 0.85 (was 0.65-1.0 — faster fade)
+        const t = (dist - 0.50) / 0.35;
         alpha = Math.round(255 * (0.5 + 0.5 * Math.cos(Math.PI * t)));
       } else {
         alpha = 0; // fully transparent outside
@@ -429,7 +429,7 @@ async function createOvalMaskOverlay(
 
   // Heavy gaussian blur on the mask for very soft, natural edges
   const maskImg = await sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
-    .blur(Math.max(3, Math.round(Math.min(w, h) * 0.04))) // 4% of image size, min 3px
+    .blur(Math.max(5, Math.round(Math.min(w, h) * 0.06))) // 6% of image size, min 5px (was 4%/3px)
     .png()
     .toBuffer();
 
@@ -503,9 +503,9 @@ export async function compositeTreesOnGarden(options: {
       const treeImgBuf = await readTreeImage(tree.imageUrl);
       console.log(`[TreeComposite] Tree ${idx + 1} image: ${treeImgBuf.length} bytes`);
 
-      // Perspective scaling: trees further away (smaller y) appear slightly smaller
-      const perspectiveScale = 0.75 + (tree.y - 0.5) * 0.5;
-      const clampedScale = Math.max(0.7, Math.min(1.0, perspectiveScale));
+      // Perspective scaling: trees further away (smaller y) appear noticeably smaller
+      const perspectiveScale = 0.55 + (tree.y - 0.5) * 0.9; // steeper curve for better depth
+      const clampedScale = Math.max(0.5, Math.min(1.0, perspectiveScale));
 
       const rawTreeW = Math.max(40, Math.round(tree.width * baseW));
       const rawTreeH = Math.max(60, Math.round(tree.height * baseH));
@@ -569,7 +569,7 @@ export async function compositeTreesOnGarden(options: {
         `<svg width="${shadowW}" height="${shadowH}">
           <defs>
             <radialGradient id="sg${idx}" cx="50%" cy="50%" rx="50%" ry="50%">
-              <stop offset="0%" stop-color="black" stop-opacity="0.25"/>
+              <stop offset="0%" stop-color="black" stop-opacity="0.40"/>
               <stop offset="100%" stop-color="black" stop-opacity="0"/>
             </radialGradient>
           </defs>
