@@ -198,10 +198,12 @@ export async function transform(input: OutInput): Promise<OutResult> {
   console.log(`[ouT] Compositing ${compositeItems.length} trees onto garden...`);
 
   // Step 1: BiRefNet + Sharp compositing (trees)
+  const tComposite = Date.now();
   const compositeResult = await compositeTreesOnGarden({
     gardenPhotoPath,
     trees: compositeItems,
   });
+  console.log(`[ouT] Tree compositing took ${Date.now() - tComposite}ms`);
 
   let finalImageUrl = compositeResult.imageUrl;
   let groundTreated = false;

@@ -551,6 +551,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
     }).catch((err: Error) => console.error('Failed to save inquiry:', err));
 
     // --- Prepare garden photo base64 ---
+    const t_photoStart = Date.now();
     let gardenPhotoBase64: string;
     try {
       gardenPhotoBase64 = gardenPhotoToBase64(gardenPhoto.path);
@@ -558,6 +559,7 @@ export async function generatePlanHandler(req: Request, res: Response) {
       console.error('Failed to read garden photo for vision:', err);
       gardenPhotoBase64 = '';
     }
+    console.log(`[GeneratePlan] Photo to base64: ${Date.now() - t_photoStart}ms`);
 
     const response: any = {
       generatedImage: null,
