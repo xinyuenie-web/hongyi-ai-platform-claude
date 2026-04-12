@@ -31,6 +31,7 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
       return fs.readFileSync(localPath);
     }
     // In Docker, fetch from website service or nginx
+    // Short timeouts — tree images should be available locally in Docker
     const urls = [
       `http://website:3000${imageUrl}`,
       `http://nginx:80${imageUrl}`,
@@ -38,7 +39,7 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
     for (const url of urls) {
       try {
         console.log(`[TreeComposite] Fetching: ${url}`);
-        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) }); // 3s timeout (was 10s)
         if (res.ok) {
           const buf = Buffer.from(await res.arrayBuffer());
           console.log(`[TreeComposite] Fetched ${buf.length} bytes from ${url}`);
@@ -61,7 +62,7 @@ async function readTreeImage(imageUrl: string): Promise<Buffer> {
 
   // Full URL
   if (imageUrl.startsWith('http')) {
-    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(imageUrl, { signal: AbortSignal.timeout(5000) });
     if (res.ok) return Buffer.from(await res.arrayBuffer());
     throw new Error(`Failed to fetch: ${imageUrl} (${res.status})`);
   }
