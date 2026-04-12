@@ -13,7 +13,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -39,7 +39,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
-          ssh $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY' '$DASHSCOPE_API_KEY' '$OPENAI_API_KEY'" << 'ENDSSH'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10 $SERVER_USER@$SERVER_HOST "bash -s -- '$REPO_URL' '$JWT_SECRET' '$DOUBAO_API_KEY' '$DOUBAO_VISION_API_KEY' '$FAL_KEY' '$DASHSCOPE_API_KEY' '$OPENAI_API_KEY'" << 'ENDSSH'
           set -e
           REPO_URL="$1"
           JWT_SECRET="$2"
@@ -60,14 +60,13 @@ jobs:
             systemctl enable docker
           fi
 
-          # Fix Docker registry: try multiple mirrors (Docker Hub blocked in China)
+          # --- Docker registry mirrors (Docker Hub blocked by GFW) ---
           mkdir -p /etc/docker
-
-          # Pre-pull base image trying multiple mirrors until one works
-          echo "=== Pulling base image via mirrors ==="
           MIRRORS=("docker.xuanyuan.me" "docker.m.daocloud.io" "hub.rat.dev" "docker.1ms.run")
-          PULLED=0
           WORKING_MIRROR=""
+
+          # Pre-pull node:20-alpine via mirrors
+          echo "=== Pulling base image via mirrors ==="
           for mirror in "${MIRRORS[@]}"; do
             echo "Trying mirror: $mirror ..."
             if docker pull "$mirror/library/node:20-alpine" 2>&1; then
@@ -75,21 +74,20 @@ jobs:
               docker tag "$mirror/library/node:20-alpine" docker.io/library/node:20-alpine
               echo "SUCCESS via $mirror"
               WORKING_MIRROR="$mirror"
-              PULLED=1
               break
             fi
             echo "Mirror $mirror failed, trying next..."
           done
-          if [ "$PULLED" = "0" ]; then
+          if [ -z "$WORKING_MIRROR" ]; then
             echo "WARNING: All mirrors failed, trying direct..."
             docker pull node:20-alpine || true
           fi
 
-          # Also pull nginx and mongo if needed
+          # Pull nginx/mongo if not cached
           for img in nginx:alpine mongo:7; do
             if ! docker image inspect "$img" >/dev/null 2>&1; then
+              base="${img%%:*}"; tag="${img#*:}"
               for mirror in "${MIRRORS[@]}"; do
-                base="${img%%:*}"; tag="${img#*:}"
                 if docker pull "$mirror/library/$base:$tag" 2>&1; then
                   docker tag "$mirror/library/$base:$tag" "$img"
                   break
@@ -98,7 +96,7 @@ jobs:
             fi
           done
 
-          # Configure working mirror in daemon.json so BuildKit also uses it
+          # Write mirror to daemon.json (only if found)
           if [ -n "$WORKING_MIRROR" ]; then
             echo "{\"registry-mirrors\":[\"https://$WORKING_MIRROR\"],\"log-driver\":\"json-file\",\"log-opts\":{\"max-size\":\"10m\",\"max-file\":\"3\"}}" > /etc/docker/daemon.json
           else
@@ -108,7 +106,7 @@ jobs:
           systemctl restart docker
           sleep 3
 
-          # Clone or pull
+          # --- Clone or update code ---
           if [ ! -d "$PROJECT_DIR/.git" ]; then
             rm -rf "$PROJECT_DIR"
             git clone "$REPO_URL" "$PROJECT_DIR"
@@ -118,66 +116,64 @@ jobs:
           git reset --hard origin/main
           echo "Version: $(git log --oneline -1)"
 
-          # Create .env
-          echo "JWT_SECRET=${JWT_SECRET}" > .env
-          echo "DOUBAO_API_KEY=${DOUBAO_API_KEY}" >> .env
-          echo "DOUBAO_VISION_API_KEY=${DOUBAO_VISION_API_KEY}" >> .env
-          echo "FAL_KEY=${FAL_KEY}" >> .env
-          echo "DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}" >> .env
-          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> .env
-          echo "FAL_PROXY_URL=http://43.129.236.142:8462" >> .env
-          echo "NEXT_PUBLIC_API_URL=" >> .env
-          echo "NODE_ENV=production" >> .env
+          # --- Write .env ---
+          cat > .env << ENVEOF
+          JWT_SECRET=${JWT_SECRET}
+          DOUBAO_API_KEY=${DOUBAO_API_KEY}
+          DOUBAO_VISION_API_KEY=${DOUBAO_VISION_API_KEY}
+          FAL_KEY=${FAL_KEY}
+          DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          FAL_PROXY_URL=http://43.129.236.142:8462
+          NEXT_PUBLIC_API_URL=
+          NODE_ENV=production
+          ENVEOF
+          # Remove leading whitespace from heredoc
+          sed -i 's/^[[:space:]]*//' .env
 
           # Stop Baota nginx to free port 80
           nginx -s stop 2>/dev/null || true
           systemctl stop nginx 2>/dev/null || true
 
-          # Clean up Docker to free disk space (very aggressive — small VPS)
-          docker builder prune -af 2>/dev/null || true
-          docker system prune -af 2>/dev/null || true
-          docker volume prune -f 2>/dev/null || true
-          echo "=== Docker cleanup done, disk: $(df -h / | tail -1 | awk '{print $4}') free ==="
+          # --- Light cleanup: only remove stopped containers and dangling images ---
+          # IMPORTANT: Do NOT run "docker system prune -af" — it destroys build layer cache
+          # and forces full rebuilds that take 5+ minutes, causing SSH timeout.
+          docker container prune -f 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true
+          echo "=== Disk: $(df -h / | tail -1 | awk '{print $4}') free ==="
 
-          # Disable BuildKit — it ignores local cache and fails on Chinese mirror metadata
+          # --- Build and deploy ---
           export DOCKER_BUILDKIT=0
           export COMPOSE_DOCKER_CLI_BUILD=0
-          # Set BASE_IMAGE to working mirror if available
-          if [ -n "$WORKING_MIRROR" ]; then
-            export BASE_IMAGE="$WORKING_MIRROR/library/node:20-alpine"
-          else
-            export BASE_IMAGE="node:20-alpine"
-          fi
-          echo "=== Docker build starting (BUILDKIT=0, BASE_IMAGE=$BASE_IMAGE) ==="
+          echo "=== Docker build starting (BUILDKIT=0) ==="
           docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans 2>&1 || {
             echo "=== Docker build FAILED ==="
-            echo "--- Server container logs ---"
             docker compose logs --tail=50 server 2>&1 || true
-            echo "--- Docker ps ---"
+            docker compose logs --tail=50 website 2>&1 || true
             docker ps -a 2>&1 || true
-            echo "--- Disk space ---"
             df -h / 2>&1 || true
             exit 1
           }
           echo "=== Docker build completed ==="
 
-          # Health check
+          # --- Health check ---
           sleep 15
           docker compose ps || true
           HEALTH_OK=0
-          for i in 1 2 3 4 5 6; do
+          for i in 1 2 3 4 5 6 7 8; do
             if curl -sf http://localhost/api/health > /dev/null 2>&1; then
               echo "Health check passed!"
               HEALTH_OK=1
               break
             fi
-            echo "Waiting... ($i/6)"
-            docker compose logs --tail=5 server 2>&1 || true
+            echo "Waiting... ($i/8)"
             sleep 5
           done
           if [ "$HEALTH_OK" = "0" ]; then
-            echo "=== Health check FAILED — server logs ==="
+            echo "=== Health check FAILED ==="
             docker compose logs --tail=30 server 2>&1 || true
+            docker compose logs --tail=30 website 2>&1 || true
+            docker compose logs --tail=10 nginx 2>&1 || true
           fi
 
           # Seed data on first deploy
