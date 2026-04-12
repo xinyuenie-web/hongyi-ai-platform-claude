@@ -162,11 +162,28 @@ async function downloadFalResult(imageUrl: string): Promise<Buffer> {
   throw new Error(`Failed to download: ${imageUrl.slice(0, 80)}`);
 }
 
+// BiRefNet circuit breaker — skip API calls after repeated failures
+let birefnetFailCount = 0;
+let birefnetLastSuccess = 0;
+const BIREFNET_MAX_FAILS = 3;
+const BIREFNET_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown after 3 failures
+
 /**
  * Remove background from a tree image using fal.ai BiRefNet.
  * Returns a PNG buffer with transparent background.
+ * Includes circuit breaker to skip after repeated failures.
  */
 async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
+  // Circuit breaker: skip BiRefNet if it keeps failing
+  if (birefnetFailCount >= BIREFNET_MAX_FAILS) {
+    const elapsed = Date.now() - birefnetLastSuccess;
+    if (elapsed < BIREFNET_COOLDOWN_MS) {
+      throw new Error(`BiRefNet circuit open (${birefnetFailCount} failures, cooldown ${Math.round((BIREFNET_COOLDOWN_MS - elapsed) / 1000)}s)`);
+    }
+    // Cooldown expired, reset and retry
+    console.log('[TreeComposite] BiRefNet circuit reset after cooldown');
+    birefnetFailCount = 0;
+  }
   const falKey = process.env.FAL_KEY;
   if (!falKey) throw new Error('FAL_KEY not configured');
 
@@ -191,7 +208,7 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
           'Authorization': `Key ${falKey}`,
         },
         body: JSON.stringify({ image_url: base64 }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(20000),
       });
 
       if (!res.ok) {
@@ -209,12 +226,17 @@ async function removeBackground(imageBuffer: Buffer): Promise<Buffer> {
       }
 
       console.log(`[TreeComposite] BiRefNet succeeded via ${ep.name}, downloading result...`);
-      return await downloadFalResult(resultUrl);
+      const result = await downloadFalResult(resultUrl);
+      birefnetFailCount = 0;
+      birefnetLastSuccess = Date.now();
+      return result;
     } catch (err: any) {
       console.warn(`[TreeComposite] BiRefNet ${ep.name} failed: ${err.message} ${err.cause || ''}`);
     }
   }
 
+  birefnetFailCount++;
+  console.warn(`[TreeComposite] BiRefNet failed on all endpoints (failure #${birefnetFailCount}/${BIREFNET_MAX_FAILS})`);
   throw new Error('Background removal failed on all endpoints');
 }
 
