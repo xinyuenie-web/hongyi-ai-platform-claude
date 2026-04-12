@@ -62,7 +62,7 @@ function isCircuitOpen(id: string): boolean {
 
 // Global time budget for the entire routing process — prevents cascading timeouts
 // Must be long enough for at least 1 model to succeed (Qwen needs ~15-25s, Doubao ~20-35s)
-const TOTAL_ROUTING_BUDGET_MS = Number(process.env.INT_TOTAL_BUDGET_MS) || 50000; // 50s max across all models
+const TOTAL_ROUTING_BUDGET_MS = Number(process.env.INT_TOTAL_BUDGET_MS) || 65000; // 65s max — enough for Qwen(35s) + Doubao fallback(30s remaining)
 
 /**
  * Select and call the best available vision model.
