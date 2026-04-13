@@ -102,6 +102,29 @@ async function tryLoadCachedCutout(imageUrl: string): Promise<Buffer | null> {
     }
   }
 
+  // In Docker: fetch pre-built cutouts from website container
+  const cutoutUrls = [
+    `http://website:3000/images/trees/cutouts/${filename}`,
+    `http://nginx:80/images/trees/cutouts/${filename}`,
+  ];
+  for (const url of cutoutUrls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 1000) {
+          console.log(`[TreeComposite] Cache HIT (website): ${treeId} (${(buf.length / 1024).toFixed(0)}KB)`);
+          // Save locally for faster access next time
+          try {
+            fs.mkdirSync(SERVER_CUTOUTS_DIR, { recursive: true });
+            fs.writeFileSync(path.join(SERVER_CUTOUTS_DIR, filename), buf);
+          } catch {}
+          return buf;
+        }
+      }
+    } catch {}
+  }
+
   console.log(`[TreeComposite] Cache MISS: ${treeId}`);
   return null;
 }
