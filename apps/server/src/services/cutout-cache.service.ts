@@ -126,7 +126,8 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
 
   // Cache version: bump this to force regeneration of all cutouts
   // v2: 25% bottom crop instead of 15%, better quality
-  const CACHE_VERSION = 'v2';
+  // v3: white-background source photos → cleaner BiRefNet segmentation
+  const CACHE_VERSION = 'v3';
   const versionFile = path.join(CUTOUTS_DIR, '.cache-version');
   const currentVersion = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf-8').trim() : '';
   if (currentVersion !== CACHE_VERSION) {
