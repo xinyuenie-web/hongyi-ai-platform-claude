@@ -129,7 +129,8 @@ export async function prepareTreeCutoutsBackground(): Promise<void> {
   // v3: white-background source photos → cleaner BiRefNet segmentation
   // v4: rectangular edge-fade cutouts (replaces circular mask)
   // v5: sky-removal + stronger blur for outdoor tree photos
-  const CACHE_VERSION = 'v5';
+  // v6: hybrid cutouts — rembg AI for clean-bg trees + color-key for complex-bg trees
+  const CACHE_VERSION = 'v6';
   const versionFile = path.join(CUTOUTS_DIR, '.cache-version');
   const currentVersion = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf-8').trim() : '';
   if (currentVersion !== CACHE_VERSION) {
