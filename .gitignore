@@ -67,5 +67,11 @@ apps/miniapp/dist/
 红艺花木海报*.png
 腾讯云*.png
 
+# Processing scripts (one-time use)
+process-tree-photos.py
+fix-remaining-photos.py
+generate-report.js
+tree-photos-backup/
+
 # Claude Code worktrees
 .claude/worktrees/
